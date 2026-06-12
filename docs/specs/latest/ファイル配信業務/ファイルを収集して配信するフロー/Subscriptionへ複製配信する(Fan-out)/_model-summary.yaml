@@ -1,0 +1,70 @@
+# _model-summary.yaml
+# データストアは RDB/KVS を使わない(全永続化はローカルファイルシステム)。
+# ファイルレイアウトは object_storage セクションでパス設計として表現する(datastore-rules.md)。
+uc: "Subscriptionへ複製配信する(Fan-out)"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+
+models:
+  - name: "FanoutCommand"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "command"
+    rdra_info: "メッセージ"
+  - name: "Message"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "SubscriptionDefinition"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Subscription"
+  - name: "Manifest"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Manifest"
+  - name: "DuplicateDeliveryGuard"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "Manifest"
+  - name: "ArchiveFileRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Archiveファイル"
+  - name: "SubscriptionFileRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Subscription"
+  - name: "ManifestRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Manifest"
+
+# RDB は使用しない
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "archive/{topic}/{message_id}"
+    purpose: "配信元(Fan-out の入力。Archive ファイルの読込)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "Subscription への複製配置(一時名 {original_file_name}.tmp で書き込み後 rename する AtomicWrite。Topic 配下の全 Subscription へ同一内容)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "Subscription 別配送状態(delivered / failed)と配送日時の記録。二重配信防止(冪等再開)の参照元"
+    content_type: "application/json"
+    operations: ["GET", "PUT"]
+    max_size: "1MB"

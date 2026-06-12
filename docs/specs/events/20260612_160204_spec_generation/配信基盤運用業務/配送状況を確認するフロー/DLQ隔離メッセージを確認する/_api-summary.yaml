@@ -1,0 +1,7 @@
+# _api-summary.yaml
+# この UC に HTTP API はない(CLI のみ。HTTP API は /metrics と /healthz の 2 つで別 UC の責務)
+uc: "DLQ隔離メッセージを確認する"
+business: "配信基盤運用業務"
+buc: "配送状況を確認するフロー"
+paths: []
+async_events: []

@@ -1,0 +1,5 @@
+uc: "冪等に処理を再開する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+paths: []
+async_events: []

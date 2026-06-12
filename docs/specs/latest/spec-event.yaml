@@ -1,0 +1,204 @@
+# spec-event.yaml — Spec 生成イベントメタデータ
+# スキーマ: dist-spec references/spec-event-schema.md (version 1.0)
+# UC 名はディレクトリ名表記(名称中の "/" は "-" に置換)を用いる
+version: "1.0"
+event_id: "20260612_160204_spec_generation"
+created_at: "2026-06-12T17:01:58+09:00"
+source: "初期構築 (trigger: rdra/nfr/arch 20260612)"
+
+# UC 一覧(業務/BUC/UC の階層)— 2 業務 / 5 BUC / 19 UC
+use_cases:
+  - business: "ファイル配信業務"
+    buc: "ファイルを収集して配信するフロー"
+    uc: "Topic・Subscriptionを設定する"
+    files:
+      - "spec.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを収集して配信するフロー"
+    uc: "ファイルを収集する(Collect)"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを収集して配信するフロー"
+    uc: "Archiveに保存する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを収集して配信するフロー"
+    uc: "Subscriptionへ複製配信する(Fan-out)"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを収集して配信するフロー"
+    uc: "配信失敗をリトライしDLQへ隔離する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを収集して配信するフロー"
+    uc: "Subscriptionディレクトリからファイルを取得する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを再送するフロー"
+    uc: "配送履歴から再送対象を確認する"
+    files:
+      - "spec.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを再送するフロー"
+    uc: "再送(Replay)を実行する"
+    files:
+      - "spec.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "ファイル配信業務"
+    buc: "ファイルを再送するフロー"
+    uc: "Subscriptionディレクトリから再送ファイルを取得する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を運用するフロー"
+    uc: "シングルバイナリ-Dockerイメージを配置する"
+    files:
+      - "spec.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を運用するフロー"
+    uc: "デーモンを起動する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を運用するフロー"
+    uc: "冪等に処理を再開する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を運用するフロー"
+    uc: "デーモンをgraceful shutdownで停止する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を運用するフロー"
+    uc: "保持期間超過のArchiveを削除する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を監視するフロー"
+    uc: "-healthzと-metricsをHTTPで公開する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 2
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配信基盤を監視するフロー"
+    uc: "外部監視基盤でTopic別メトリクスを観測する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配送状況を確認するフロー"
+    uc: "statusコマンドで配送状態を確認する"
+    files:
+      - "spec.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配送状況を確認するフロー"
+    uc: "DLQ隔離メッセージを確認する"
+    files:
+      - "spec.md"
+      - "tier-ops-cli.md"
+    api_count: 0
+    async_event_count: 0
+  - business: "配信基盤運用業務"
+    buc: "配送状況を確認するフロー"
+    uc: "構造化ログを調査する"
+    files:
+      - "spec.md"
+      - "tier-daemon-worker.md"
+    api_count: 0
+    async_event_count: 0
+
+# 全体横断仕様サマリー
+# GUI を持たないため ux/ui/data-viz は運用者向け CLI/設定/観測 UX として翻案 (_inference.md)
+cross_cutting:
+  ux_design:
+    # user_flows: 運用者ジャーニー3本(導入〜復旧 / 定常運転 / 再送・遡及)
+    user_flows: 3
+    # ia_pages: IA の翻案 = CLI サブコマンド4つ(serve / status / replay / config validate)
+    ia_pages: 4
+    # psychology_principles: コマンド UX 原則5つ(フィードフォワード / 冪等性 / 追跡可能性 / スクリプト親和性 / 影響範囲明示)
+    psychology_principles: 5
+  ui_design:
+    # layout_patterns: CLI 出力フォーマット規約4種(status / config validate / replay / serve)
+    layout_patterns: 4
+    # responsive_breakpoints: GUI なしのためブレイクポイントなし
+    responsive_breakpoints: 0
+    # component_guidelines: 共通規約4種(CLI 出力 / 終了コード / 設定 YAML 構造 / 構造化ログ)
+    component_guidelines: 4
+  data_visualization:
+    # target_screens: Grafana ダッシュボード設計ガイド1面(サマリー+Topic別ドリルダウンの2階層)
+    target_screens: 1
+    # chart_types: ステータスパネル / 棒グラフ / テーブル / 折れ線グラフ / エリアチャート
+    chart_types: 5
+  openapi:
+    # api_count: GET /healthz, GET /metrics (観測専用)
+    api_count: 2
+  asyncapi:
+    # async_event_count: AsyncAPI 対象イベントなし(ファイルベース Pub/Sub。asyncapi.yaml は未生成)
+    async_event_count: 0
+
+# story_generation: GUI(presentation 系ティア)が存在しないため不要
+# (arch-design.yaml の tiers は tier-daemon-worker / tier-ops-cli のみ。design-event.yaml も不在)
+story_generation: "not_required"
+
+# 生成統計
+stats:
+  total_ucs: 19
+  total_apis: 2
+  total_async_events: 0
+  businesses: 2
+  bucs: 5

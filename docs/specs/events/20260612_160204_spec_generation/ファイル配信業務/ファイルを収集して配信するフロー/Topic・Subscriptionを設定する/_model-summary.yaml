@@ -1,0 +1,60 @@
+# _model-summary.yaml
+# データストアは RDB/KVS を使わない(全永続化はローカルファイルシステム)。
+# ファイルレイアウトは object_storage セクションでパス設計として表現する(datastore-rules.md)。
+uc: "Topic・Subscriptionを設定する"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+
+models:
+  - name: "ConfigValidateArgs"
+    tier: "tier-ops-cli"
+    layer: "command"
+    type: "request"
+    rdra_info: "設定"
+  - name: "ConfigValidateQuery"
+    tier: "tier-ops-cli"
+    layer: "command"
+    type: "query"
+    rdra_info: "設定"
+  - name: "Config"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "設定"
+  - name: "TopicDefinition"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Topic"
+  - name: "SubscriptionDefinition"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Subscription"
+  - name: "SourceDefinition"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "収集ソース"
+  - name: "CredentialRef"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "認証情報"
+  - name: "ConfigYamlRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "設定"
+
+# RDB は使用しない
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "config.yaml"
+    purpose: "配信構成定義(単一 YAML 設定。topics / subscriptions / 収集ソース / 認証情報参照 / polling_interval / archive_retention / retry_max_count / metrics_port)"
+    content_type: "application/yaml"
+    operations: ["GET"]
+    max_size: "1MB"

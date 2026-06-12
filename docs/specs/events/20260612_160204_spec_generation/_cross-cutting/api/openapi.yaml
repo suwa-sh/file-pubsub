@@ -1,0 +1,158 @@
+# OpenAPI 3.1 spec — file-pubsub 常駐デーモンの観測エンドポイント
+# 正本: docs/specs/events/20260612_160204_spec_generation/_cross-cutting/ux-ui/data-visualization.md (メトリクス契約)
+# 詳細: 配信基盤運用業務/配信基盤を監視するフロー/-healthzと-metricsをHTTPで公開する/tier-daemon-worker.md
+openapi: "3.1.0"
+info:
+  title: "file-pubsub Observability API"
+  version: "1.0.0"
+  summary: "file-pubsub 常駐デーモンの観測エンドポイント (/healthz, /metrics)"
+  description: |
+    file-pubsub 常駐デーモンが組込 HTTP サーバで公開する**観測専用 API**。
+
+    **このシステムの HTTP API は観測(死活監視・メトリクス公開)専用であり、
+    データ配送(ファイルの収集・Fan-out 配信・再送・DLQ 隔離)は HTTP を介さず
+    すべてファイルシステム経由(Topic / Subscription / Archive / DLQ ディレクトリ)で行う。**
+    Producer / Consumer との連携契約はファイルシステム IF、運用操作は CLI
+    (`status` / `replay` 等)の責務であり、本 spec の対象外。
+
+    - 公開エンドポイントは `GET /healthz` と `GET /metrics` の 2 つのみ。
+      それ以外のパスは 404 を返す(Web UI・オンライン応答系は持たない。CTP-007 / CTP-008)。
+    - 認証なし。アクセス制御は OS・ネットワークの責務(CTP-007)。
+    - 公開ポートは設定 YAML の `metrics_port`。組込 HTTP サーバはデーモン起動時に開始し、
+      graceful shutdown 時に停止する。デーモン停止中は connection refused となり、
+      外部監視基盤が DOWN と判定する。
+    - HTTP アクセスは外部監視基盤の監視ポーリングのみを想定する(NFR B.1.1.1 Lv1)。
+    - しきい値判定・アラート発報・時系列蓄積は外部監視基盤(Prometheus / Grafana 等)の責務。
+      本体はメトリクス契約の安定提供に徹する(SP-005、CTP-009)。
+  contact:
+    name: "file-pubsub"
+    url: "https://github.com/suwa-sh/file-pubsub"
+servers:
+  - url: "http://localhost:9090"
+    description: "常駐デーモンの組込 HTTP サーバ。ポートは設定 YAML の metrics_port (例: 9090)"
+tags:
+  - name: "observability"
+    description: "観測エンドポイント(死活監視・Prometheus メトリクス)"
+security: []
+paths:
+  /healthz:
+    get:
+      operationId: "getHealthz"
+      tags: ["observability"]
+      summary: "死活監視エンドポイント"
+      description: |
+        デーモン稼働中に HTTP 200 を返す。**死活はステータスコードで判定し、
+        レスポンスボディの内容に契約はない**(text または JSON のいずれでもよい)。
+
+        - 200: デーモン稼働中(正常)
+        - 503: デーモンは応答するが正常稼働していない(graceful shutdown 中など)
+        - 接続失敗 (connection refused): デーモン停止中(プロセスなし)。
+          外部監視基盤はこれを DOWN と判定する。
+      responses:
+        "200":
+          description: "デーモン稼働中。ボディは text または JSON(内容に契約なし)"
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/HealthzText"
+              example: "ok"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzJson"
+              example:
+                status: "ok"
+        "503":
+          description: "デーモンは応答するが正常稼働していない(graceful shutdown 中など)"
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/HealthzText"
+              example: "unavailable"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzJson"
+              example:
+                status: "unavailable"
+  /metrics:
+    get:
+      operationId: "getMetrics"
+      tags: ["observability"]
+      summary: "Prometheus メトリクスエンドポイント"
+      description: |
+        Topic 別メトリクスを Prometheus テキスト形式(text exposition format version 0.0.4)で公開する。
+        情報「メトリクス」の属性をそのまま公開し、これ以外のメトリクスは契約に含めない。
+        メトリクス名は実装時に確定し、確定後は後方互換を維持する。
+
+        公開する 5 メトリクス(ラベルは `topic` のみ):
+
+        | メトリクス名 | 型 | 説明 |
+        |---|---|---|
+        | `file_pubsub_last_collect_timestamp_seconds` | gauge | Topic 別最終収集時刻(Unix 秒)。収集成功のたびに更新 |
+        | `file_pubsub_processed_total` | counter | 処理件数(収集〜配信サイクルで処理したメッセージ累計) |
+        | `file_pubsub_delivery_failure_total` | counter | 配信失敗数(Subscription 配信の失敗累計。リトライによる再失敗を含む) |
+        | `file_pubsub_dlq_count` | gauge | DLQ 件数(現在 DLQ に隔離されているメッセージ数) |
+        | `file_pubsub_backlog_count` | gauge | 滞留数(収集済みでまだ全 Subscription へ配信完了していないメッセージ数) |
+
+        メトリクスはインメモリ集計で永続化しない。**デーモン再起動で counter はリセットされる**ため、
+        監視側は `rate()` / `increase()` ベースで扱い、生値の単調増加を前提にしない
+        (時系列の蓄積は外部監視基盤側の責務。storage_mapping E-012: cache、LR-302)。
+      responses:
+        "200":
+          description: "Prometheus テキスト形式のメトリクス一覧"
+          content:
+            text/plain; version=0.0.4:
+              schema:
+                $ref: "#/components/schemas/PrometheusTextFormat"
+              example: |
+                # HELP file_pubsub_last_collect_timestamp_seconds Topic 別最終収集時刻(Unix 秒)。収集成功のたびに更新
+                # TYPE file_pubsub_last_collect_timestamp_seconds gauge
+                file_pubsub_last_collect_timestamp_seconds{topic="orders"} 1.7654321e+09
+                file_pubsub_last_collect_timestamp_seconds{topic="invoices"} 1.7654318e+09
+                # HELP file_pubsub_processed_total 処理件数(収集〜配信サイクルで処理したメッセージ累計)
+                # TYPE file_pubsub_processed_total counter
+                file_pubsub_processed_total{topic="orders"} 12
+                file_pubsub_processed_total{topic="invoices"} 3
+                # HELP file_pubsub_delivery_failure_total 配信失敗数(Subscription 配信の失敗累計。リトライによる再失敗を含む)
+                # TYPE file_pubsub_delivery_failure_total counter
+                file_pubsub_delivery_failure_total{topic="orders"} 1
+                file_pubsub_delivery_failure_total{topic="invoices"} 0
+                # HELP file_pubsub_dlq_count DLQ 件数(現在 DLQ に隔離されているメッセージ数)
+                # TYPE file_pubsub_dlq_count gauge
+                file_pubsub_dlq_count{topic="orders"} 0
+                file_pubsub_dlq_count{topic="invoices"} 0
+                # HELP file_pubsub_backlog_count 滞留数(収集済みでまだ全 Subscription へ配信完了していないメッセージ数)
+                # TYPE file_pubsub_backlog_count gauge
+                file_pubsub_backlog_count{topic="orders"} 2
+                file_pubsub_backlog_count{topic="invoices"} 0
+components:
+  schemas:
+    HealthzText:
+      type: string
+      description: "死活応答のテキストボディ。内容に契約はない(死活はステータスコードで判定する)"
+      examples:
+        - "ok"
+    HealthzJson:
+      type: object
+      description: "死活応答の JSON ボディ。内容に契約はない(死活はステータスコードで判定する)"
+      properties:
+        status:
+          type: string
+          description: "稼働状態の表示用文字列(例: ok / unavailable)。契約上の意味は持たない"
+          examples:
+            - "ok"
+      additionalProperties: true
+    PrometheusTextFormat:
+      type: string
+      description: |
+        Prometheus テキスト形式(text exposition format version 0.0.4)。
+        `file_pubsub_last_collect_timestamp_seconds`(gauge) /
+        `file_pubsub_processed_total`(counter) /
+        `file_pubsub_delivery_failure_total`(counter) /
+        `file_pubsub_dlq_count`(gauge) /
+        `file_pubsub_backlog_count`(gauge) の 5 メトリクスを、
+        いずれも `topic` ラベル付きで含む。
+      examples:
+        - |
+          # HELP file_pubsub_processed_total 処理件数(収集〜配信サイクルで処理したメッセージ累計)
+          # TYPE file_pubsub_processed_total counter
+          file_pubsub_processed_total{topic="orders"} 12

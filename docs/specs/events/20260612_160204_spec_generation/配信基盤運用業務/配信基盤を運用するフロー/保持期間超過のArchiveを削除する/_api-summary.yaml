@@ -1,0 +1,5 @@
+uc: "保持期間超過のArchiveを削除する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+paths: []
+async_events: []

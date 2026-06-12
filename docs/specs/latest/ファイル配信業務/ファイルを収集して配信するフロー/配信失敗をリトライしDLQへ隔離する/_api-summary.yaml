@@ -1,0 +1,7 @@
+# _api-summary.yaml
+# 本システムの HTTP API は /metrics・/healthz のみ(別 UC)。この UC に HTTP API・非同期イベントはない。
+uc: "配信失敗をリトライしDLQへ隔離する"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+paths: []
+async_events: []

@@ -1,0 +1,80 @@
+# _model-summary.yaml
+# データストアは RDB/KVS を使わない(全永続化はローカルファイルシステム)。
+# ファイルレイアウトは object_storage セクションでパス設計として表現する(datastore-rules.md)。
+uc: "配信失敗をリトライしDLQへ隔離する"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+
+models:
+  - name: "RetryDlqCommand"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "command"
+    rdra_info: "メッセージ"
+  - name: "RetryClassification"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "value-object"
+    rdra_info: "Manifest"
+  - name: "Message"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "Manifest"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Manifest"
+  - name: "RetryLimitRule"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "Manifest"
+  - name: "DlqEntry"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "DLQ"
+  - name: "DlqRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "DLQ"
+  - name: "ManifestRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Manifest"
+
+# RDB は使用しない
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "failed 配送の検出・リトライ回数の更新・dlq 記録(Subscription 別配送状態)"
+    content_type: "application/json"
+    operations: ["GET", "PUT"]
+    max_size: "1MB"
+  - path_pattern: "archive/{topic}/{message_id}"
+    purpose: "リトライ再配置の配信元(Archive ファイルの読込)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "リトライによる再配置(AtomicWrite)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"
+  - path_pattern: "dlq/{topic}/{message_id}"
+    purpose: "リトライ上限超過メッセージの隔離ファイル(Archive からの複製)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"
+  - path_pattern: "dlq/{topic}/{message_id}.meta.json"
+    purpose: "隔離メタデータ(message_id / 隔離理由 / 失敗回数 / 隔離日時)"
+    content_type: "application/json"
+    operations: ["PUT"]
+    max_size: "1MB"

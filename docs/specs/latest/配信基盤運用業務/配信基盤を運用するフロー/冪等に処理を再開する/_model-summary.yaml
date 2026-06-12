@@ -1,0 +1,61 @@
+uc: "冪等に処理を再開する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+
+models:
+  - name: "ResumeCycle(再開サイクル)"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "command"
+    rdra_info: ""
+  - name: "Message(メッセージ)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "Manifest"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Manifest"
+  - name: "IdempotencyJudge(二重配信防止判定)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "Manifest"
+  - name: "ProcessedRegistry(処理済み管理)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "処理済み管理"
+  - name: "FileStore(Manifest / 処理済み管理 / Archive / Subscription 配置)"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Manifest"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "メッセージ別 JSON。中断時点の Subscription 別配送状態の参照と delivered 記録(冪等再開の判定根拠)"
+    content_type: "application/json"
+    operations: ["GET", "PUT"]
+    max_size: "1MB"
+  - path_pattern: "processed/{topic}.json"
+    purpose: "処理済み記録ファイル(収集元ファイル識別子 + 処理済み判定日時)。copy 設定の収集ソースでの重複収集防止(再起動後の冪等再開)"
+    content_type: "application/json"
+    operations: ["GET"]
+    max_size: "10MB"
+  - path_pattern: "archive/{topic}/{message_id}"
+    purpose: "未配信 Subscription への再配信元(Archive ファイルの読込)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "設定YAMLの配置先ディレクトリ。未配信 Subscription のみへの AtomicWrite 配置(一時名 .tmp → rename)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"

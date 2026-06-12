@@ -1,0 +1,53 @@
+# _model-summary.yaml
+# RDB/KVS は使用しない。永続化はローカルファイルシステムのみ(tables は空、object_storage にパス設計を記述)
+uc: "配送履歴から再送対象を確認する"
+business: "ファイル配信業務"
+buc: "ファイルを再送するフロー"
+
+models:
+  - name: "StatusArgs"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "request"
+    rdra_info: "Manifest"
+  - name: "StatusQuery"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-usecase"
+    type: "query"
+    rdra_info: "Manifest"
+  - name: "ManifestEntry"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-domain"
+    type: "entity"
+    rdra_info: "Manifest"
+  - name: "ManifestRecord"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-gateway"
+    type: "record"
+    rdra_info: "Manifest"
+  - name: "DeliveryStatusTable"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "view-model"
+    rdra_info: "Manifest"
+  - name: "DeliveryStatusSummary"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "view-model"
+    rdra_info: "Manifest"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "配送履歴照会(message_id・topic・Subscription 別配送状態 delivered / failed / dlq、リトライ回数、配送日時、再送(Replay)記録の読取)"
+    content_type: "application/json"
+    operations: ["GET"]
+    max_size: "1MB"
+  - path_pattern: "dlq/{topic}/{message_id}"
+    purpose: "dlq 状態の再送対象特定時に隔離メッセージの存在を参照(読取のみ)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"

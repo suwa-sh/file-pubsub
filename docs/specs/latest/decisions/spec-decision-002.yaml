@@ -1,0 +1,42 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-002"
+title: "非同期境界: メッセージング基盤(MQ)を使わず、ディレクトリ + Manifest によるファイルベース Pub/Sub を採用する"
+status: "approved"
+generated_at: "2026-06-12T17:01:58+09:00"
+context: |
+  本システムの中核は「Producer が出力したファイルを収集し、複数の Consumer(Subscription)へ
+  同報配信する」非同期の Pub/Sub である。Collect → Archive → Fan-out → リトライ/DLQ という
+  処理連鎖は本質的に非同期であり、一般には MQ(Kafka / RabbitMQ / SQS 等)+ AsyncAPI で
+  契約を定義する領域に相当する。
+  しかし導入先はレガシー現場であり、Producer / Consumer は FTP/SFTP/SCP/ローカルディレクトリ
+  経由のファイル授受しかできない既存システムを無改修で接続することが最重要要求である
+  (UC: Subscriptionディレクトリからファイルを取得する、CTP-003)。
+  非同期境界を何で表現するか(MQ 導入 vs ファイルベース)が論点となった。
+decision: |
+  メッセージング基盤は導入せず、ディレクトリ + Manifest によるファイルベース Pub/Sub を採用する。
+  - チャネル: Topic / Subscription / Archive / DLQ の各ディレクトリがチャネルに相当する
+  - メッセージ: 収集ファイル本体 + メッセージ別 Manifest(JSON)が配送単位
+  - 配送保証: AtomicWrite(一時名書き込み → rename)、リトライ上限、DLQ 隔離、Manifest による配送状態記録で実現する
+  - 契約定義: 非同期契約はファイルシステム IF(object-storage-schema.yaml + datastore-schema.md)として記述し、
+    AsyncAPI 対象のメッセージングイベントは存在しないため asyncapi.yaml は生成しない
+  理由: Producer / Consumer 無改修という最重要要求は「従来のファイル授受手段のまま接続できること」を意味し、
+  MQ クライアントの組み込みは要求そのものと矛盾する。デーモンは単一プロセス・単一ホストで完結する
+  スコープ(SR-006: Lock による二重起動防止)であり、ブローカーが提供する分散・スケール特性は過剰である。
+consequences:
+  positive:
+    - "Producer / Consumer は完全無改修で接続でき、レガシー現場の導入障壁が事実上ゼロになる"
+    - "追加ミドルウェア(ブローカー)の構築・監視・パッチ運用が不要で、シングルバイナリ + 設定 YAML だけで完結する"
+    - "メッセージの実体がファイルとして見えるため、運用者が標準ツール(ls / cat / status コマンド)で調査・復旧できる"
+    - "Archive が配信前必須保存として全履歴を保持し、replay による遡及再送が MQ のリテンション制約なしに行える"
+  negative:
+    - "MQ が標準提供する機能(順序保証・consumer group・ack ベースのフロー制御)は持たない。順序保証なしは契約として明記が必要"
+    - "スループットはファイルシステム I/O とポーリング間隔に律速され、大量小サイズメッセージの高頻度配送には不向き"
+    - "単一ホスト・単一デーモン前提であり、水平スケールやブローカー冗長化が必要になった場合はアーキテクチャ再設計となる"
+    - "AsyncAPI 等の標準契約記述が使えず、ファイル IF 契約は本リポジトリ独自のスキーマ文書で維持する必要がある"
+alternatives_considered:
+  - name: "MQ 導入(Kafka / RabbitMQ / SQS 等のメッセージングブローカー)"
+    reason_rejected: "Producer / Consumer に MQ クライアント組み込みを強いるため『既存システム無改修』の最重要要求と矛盾する。ブローカーの構築・運用負荷もレガシー現場には過大で、単一ホスト完結のスコープに対して過剰なため不採用"
+  - name: "ハイブリッド(内部処理連鎖のみ MQ / 軽量ジョブキューを使用し、外部 IF はファイル)"
+    reason_rejected: "外部 IF がファイルである以上、内部だけ MQ 化しても得られるのはプロセス内並行性のみで、Go のゴルーチン + ポーリングサイクルで十分代替できる。依存の追加に見合う価値がないため不採用"

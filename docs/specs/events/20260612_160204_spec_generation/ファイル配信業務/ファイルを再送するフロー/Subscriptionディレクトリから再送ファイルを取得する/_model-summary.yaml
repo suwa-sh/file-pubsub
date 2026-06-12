@@ -1,0 +1,33 @@
+# _model-summary.yaml
+# RDB/KVS は使用しない。Consumer 側操作の外部 IF 仕様であり、システム側はファイルレイアウトの配置保証のみ
+uc: "Subscriptionディレクトリから再送ファイルを取得する"
+business: "ファイル配信業務"
+buc: "ファイルを再送するフロー"
+
+models:
+  - name: "SubscriptionDirectory"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-gateway"
+    type: "value-object"
+    rdra_info: "Subscription"
+  - name: "ReplayedFile"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-gateway"
+    type: "record"
+    rdra_info: "メッセージ"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "再送ファイルの受け渡し(Consumer が従来手段で GET・削除する外部 IF。正式名は常に完全な内容)"
+    content_type: "application/octet-stream"
+    operations: ["GET", "DELETE"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}.tmp"
+    purpose: "AtomicWrite の一時名(Consumer は取得対象にしないこと)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"

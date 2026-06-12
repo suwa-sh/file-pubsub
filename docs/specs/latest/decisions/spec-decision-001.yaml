@@ -1,0 +1,43 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-001"
+title: "API スタイル選定: HTTP API は観測専用 2 エンドポイント(Prometheus pull)のみとし、REST CRUD API を設けない"
+status: "approved"
+generated_at: "2026-06-12T17:01:58+09:00"
+context: |
+  file-pubsub は Producer / Consumer を無改修のままファイル配信を仲介する Go 製常駐デーモン + 運用 CLI である
+  (arch-design.yaml: tier-daemon-worker / tier-ops-cli)。
+  データ配送(収集・Archive 保存・Fan-out 配信・再送・DLQ 隔離)の外部契約はすべて
+  ファイルシステム IF(Topic / Subscription / Archive / DLQ ディレクトリ + Manifest)であり、
+  HTTP を介したデータ授受は要求に存在しない。
+  一方で NFR B.1.1.1(外部監視基盤による 24 時間自動監視、CTP-009)と SP-005(メトリクス契約の安定提供)から、
+  死活監視とメトリクス公開のための HTTP エンドポイントは必要となる。
+  REST / GraphQL / gRPC のスタイル選定と、管理操作(設定変更・再送等)を HTTP API 化するか否かが論点となった。
+decision: |
+  HTTP API は観測専用の 2 エンドポイントのみとする:
+  - GET /healthz — 死活監視(ステータスコードで判定、ボディに契約なし)
+  - GET /metrics — Prometheus テキスト形式(pull 型)の Topic 別メトリクス公開
+  これ以外のパスは 404 とし、REST CRUD API・Web UI・オンライン応答系は設けない(CTP-007 / CTP-008)。
+  openapi.yaml(OpenAPI 3.1)はこの 2 エンドポイントの契約のみを定義する。
+  理由: データ配送の外部契約はファイルシステム IF であり、HTTP API でデータや構成を操作する要求が RDRA に存在しない。
+  運用操作は CLI(serve / status / replay / config validate)+ 単一 YAML 設定ファイルで完結させ、
+  HTTP の責務を「観測契約の安定提供」に限定することで、攻撃面(認証不要エンドポイントの最小化)と
+  運用負荷(API のバージョニング・互換性管理)を最小化する。
+consequences:
+  positive:
+    - "認証なしで公開する HTTP 面が観測専用 GET 2 本に限定され、攻撃面が最小化される(アクセス制御は OS・ネットワークの責務に明確化)"
+    - "Prometheus pull 型の標準契約に乗るため、外部監視基盤側の追加開発なしで 24 時間自動監視を実現できる(CTP-009)"
+    - "REST API のバージョニング・後方互換・認証認可の設計と運用が不要になり、レガシー現場での導入・運用負荷が下がる"
+    - "データ配送契約(ファイルシステム IF)と観測契約(HTTP)の責務境界が明確になる"
+  negative:
+    - "リモートからの構成変更・再送指示は HTTP ではできず、対象ホストへのログイン + CLI 実行が必要になる"
+    - "メトリクス名は実装時確定後に後方互換維持の制約を負う(契約変更の自由度が下がる)"
+    - "将来 Web UI や管理 API が必要になった場合は、新たな認証設計を含むアーキテクチャ変更が必要になる"
+alternatives_considered:
+  - name: "REST 管理 API(設定 CRUD・再送指示・状態照会を HTTP で提供)"
+    reason_rejected: "データ配送・運用操作の HTTP 化は RDRA に要求がなく、CLI + 単一 YAML 設定ファイルで代替できる。認証認可・バージョニングの設計運用コストと攻撃面の増加に見合う価値がないため不採用"
+  - name: "gRPC / GraphQL による観測・管理 API"
+    reason_rejected: "外部監視基盤(Prometheus / Grafana 等)の標準は Prometheus テキスト形式の pull であり、gRPC / GraphQL は監視基盤側にアダプタ開発を強いる。レガシー現場の導入障壁になるため不採用"
+  - name: "push 型メトリクス送信(Pushgateway / リモートライト)"
+    reason_rejected: "本体が外部監視基盤への送信設定・再送制御を持つことになり、責務境界(本体は契約の安定提供に徹する: SP-005)を侵食する。pull 型なら監視側の都合でスクレイプ間隔を制御できるため不採用"

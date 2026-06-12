@@ -1,0 +1,44 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-003"
+title: "データ永続化: RDB 正規化をせず、ファイルレイアウト + メッセージ別 JSON Manifest を採用する"
+status: "approved"
+generated_at: "2026-06-12T17:01:58+09:00"
+context: |
+  永続化対象は Archive(配信前必須保存のファイル実体)、Manifest(message_id・topic・
+  Subscription 別配送状態・リトライ回数・配送日時・再送記録)、DLQ(隔離ファイル + 隔離理由)、
+  設定(単一 YAML)である。配送状態の管理と status コマンドによる横断照会が必要であり、
+  一般には RDB に正規化テーブル(messages / deliveries / dlq 等)を置く設計が考えられる。
+  しかし arch-decision-001(アーキテクチャ設計)で「組込 DB を含む DB 依存を持たず、
+  ファイルシステムのみで永続化する」方針が既に決定されている。
+  Spec 工程では、この方針の下で配送状態をどう構造化し、横断検索をどう成立させるかが論点となった。
+decision: |
+  RDB 正規化は行わず、ファイルレイアウト + メッセージ別 JSON(Manifest)を採用する
+  (arch-decision-001 の継承)。
+  - レイアウト: archive/{topic}/・subscriptions 配下・dlq/{topic}/・manifest/{topic}/ の
+    ディレクトリ構造を object-storage-schema.yaml(buckets 形式)+ datastore-schema.md に正本として定義する
+  - 配送状態: メッセージ 1 件につき Manifest JSON 1 ファイル。message_id をキーに
+    Archive / DLQ / 構造化ログと相互参照できる
+  - 横断検索: status コマンドが manifest/ ディレクトリを走査して集計・絞り込み(topic /
+    subscription / 状態)を行う。インデックスや DB は持たない
+  - rdb-schema.yaml / kvs-schema.yaml は対象が存在しないため生成しない
+  理由: 配送状態の参照パターンは「message_id 単位の更新」と「運用時の全件走査」のみで、
+  トランザクション横断の結合・集計を要しない。メッセージ別 JSON なら配送単位の更新が
+  ファイル単位の AtomicWrite で完結し、DB プロセス・スキーママイグレーション・
+  ドライバ依存を持ち込まずにシングルバイナリ配布を維持できる。
+consequences:
+  positive:
+    - "DB レス(組込 DB 含む)でシングルバイナリ + ディレクトリだけで動作し、レガシー現場への導入と退役(ディレクトリ削除)が容易"
+    - "Manifest がメッセージ単位で独立しているため、配送状態の更新が他メッセージとロック競合せず、破損時の影響もメッセージ 1 件に閉じる"
+    - "運用者が標準ツール(cat / jq / grep)で Manifest を直接調査でき、status コマンドと同じ事実を裏取りできる"
+    - "retention 削除・冪等再開が message_id 基準のファイル操作として単純に実装できる"
+  negative:
+    - "status の横断照会は manifest/ の全件走査であり、メッセージ件数増加に対して線形に遅くなる(インデックスなし)"
+    - "RDB のような複合条件クエリ・トランザクション整合・外部キー制約は使えず、整合性はアプリケーション規約(AtomicWrite・命名規約)で守る必要がある"
+    - "Manifest スキーマの変更管理(後方互換)はマイグレーションツールなしで自前管理となる"
+alternatives_considered:
+  - name: "SQLite(組込 RDB)に配送状態を正規化テーブルとして保持"
+    reason_rejected: "arch-decision-001 で不採用が決定済み。CGO / ドライバ依存・DB ファイル破損時の全体影響・スキーママイグレーション運用が増え、ファイル操作で完結する規模の要求に対して過剰なため、本工程でもその判断を継承して不採用"
+  - name: "単一の集約 Manifest(全メッセージを 1 つの JSON / JSONL に追記)"
+    reason_rejected: "全配送状態が単一ファイルにロック集中し、更新競合と破損時の全件影響が生じる。メッセージ別 JSON なら更新独立性・部分破損耐性・retention 削除の単純さで優るため不採用"

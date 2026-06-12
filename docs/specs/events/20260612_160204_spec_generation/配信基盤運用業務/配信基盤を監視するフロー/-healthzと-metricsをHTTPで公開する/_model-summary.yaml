@@ -1,0 +1,36 @@
+uc: "/healthzと/metricsをHTTPで公開する"
+business: "配信基盤運用業務"
+buc: "配信基盤を監視するフロー"
+
+models:
+  - name: "EmbeddedHttpServer(組込HTTPサーバ)"
+    tier: "tier-daemon-worker"
+    layer: "runtime"
+    type: "state"
+    rdra_info: ""
+  - name: "MetricsExporter(メトリクスエクスポータ)"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "メトリクス"
+  - name: "Metrics(Topic別インメモリ集計)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "メトリクス"
+  - name: "Topic"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Topic"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "config.yaml"
+    purpose: "--config で指定する単一YAML設定ファイル。metrics_port(公開ポート)の参照。メトリクス自体はインメモリ集計で永続化しない(storage_mapping E-012 cache)"
+    content_type: "application/yaml"
+    operations: ["GET"]
+    max_size: "1MB"

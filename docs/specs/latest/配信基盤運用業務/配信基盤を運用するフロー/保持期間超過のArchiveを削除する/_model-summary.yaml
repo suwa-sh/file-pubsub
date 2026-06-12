@@ -1,0 +1,46 @@
+uc: "保持期間超過のArchiveを削除する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+
+models:
+  - name: "RetentionJob(retention 処理)"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "command"
+    rdra_info: ""
+  - name: "ArchiveFile(Archiveファイル)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Archiveファイル"
+  - name: "RetentionDeadlineJudge(保持期限判定)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "Archiveファイル"
+  - name: "Config(設定)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "設定"
+  - name: "ArchiveStore(archive/{topic}/ の一覧・削除)"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Archiveファイル"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "archive/{topic}/{message_id}"
+    purpose: "保持期限(保存日時 + archive_retention 日)を超過した Archive ファイルのみ削除。期限内は確実に保持"
+    content_type: "application/octet-stream"
+    operations: ["GET", "DELETE"]
+    max_size: "500MB"
+  - path_pattern: "config.yaml"
+    purpose: "--config で指定する単一YAML設定ファイル。archive_retention(保持期間日数)の参照"
+    content_type: "application/yaml"
+    operations: ["GET"]
+    max_size: "1MB"

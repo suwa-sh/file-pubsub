@@ -1,0 +1,33 @@
+# _model-summary.yaml
+# RDB/KVS は使用しない。構造化ログ(stdout / ファイル)の出力契約が対象(tables は空、object_storage にレイアウトを記述)
+uc: "構造化ログを調査する"
+business: "配信基盤運用業務"
+buc: "配送状況を確認するフロー"
+
+models:
+  - name: "DeliveryEvent"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-usecase"
+    type: "event"
+    rdra_info: "メッセージ"
+  - name: "ClassifiedError"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-usecase"
+    type: "value-object"
+    rdra_info: "ログ"
+  - name: "LogEntry"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-runtime"
+    type: "record"
+    rdra_info: "ログ"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "構造化ログ出力先(stdout またはログファイル。導入先のログ転送・ローテーション運用に委ねる)"
+    purpose: "1 イベント 1 行 JSON の構造化ログ(logged_at / message_id / topic / subscription / event_type / error_detail)。配信失敗の特定粒度を保証。保管 90 日目安"
+    content_type: "application/x-ndjson"
+    operations: ["PUT", "GET"]
+    max_size: "1KB/行"

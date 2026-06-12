@@ -1,0 +1,7 @@
+# _api-summary.yaml
+# この UC に HTTP API はない(CLI のみ。HTTP API は /metrics と /healthz の 2 つで別 UC の責務)
+uc: "配送履歴から再送対象を確認する"
+business: "ファイル配信業務"
+buc: "ファイルを再送するフロー"
+paths: []
+async_events: []

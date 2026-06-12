@@ -1,0 +1,26 @@
+uc: "外部監視基盤でTopic別メトリクスを観測する"
+business: "配信基盤運用業務"
+buc: "配信基盤を監視するフロー"
+
+models:
+  - name: "MetricsContract(メトリクス契約)"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "value-object"
+    rdra_info: "メトリクス"
+  - name: "Metrics(Topic別インメモリ集計)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "メトリクス"
+  - name: "Topic"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Topic"
+
+tables: []
+
+kvs: []
+
+object_storage: []

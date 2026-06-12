@@ -1,0 +1,80 @@
+# _model-summary.yaml
+# データストアは RDB/KVS を使わない(全永続化はローカルファイルシステム)。
+# ファイルレイアウトは object_storage セクションでパス設計として表現する(datastore-rules.md)。
+uc: "ファイルを収集する(Collect)"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+
+models:
+  - name: "CollectCycleCommand"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "command"
+    rdra_info: "収集ソース"
+  - name: "SourceFileCandidate"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "収集ソース"
+  - name: "StabilityCheckRule"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "収集ソース"
+  - name: "MessageIdRule"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "メッセージ"
+  - name: "Message"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "SourceConnector"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "収集ソース"
+  - name: "CollectedFileRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "メッセージ"
+  - name: "ManifestRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Manifest"
+  - name: "ProcessedRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "処理済み管理"
+
+# RDB は使用しない
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "work/collect/{topic}/{message_id}"
+    purpose: "収集済みファイルの一時保管(一時名 {message_id}.tmp で書き込み後 rename。後続の Archive 保存の入力)"
+    content_type: "application/octet-stream"
+    operations: ["PUT", "GET"]
+    max_size: "500MB"
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "メッセージ配送管理レコードの新規作成(status=収集済。message_id / topic / 元ファイル名 / 収集時刻 / retry_count=0)"
+    content_type: "application/json"
+    operations: ["PUT"]
+    max_size: "1MB"
+  - path_pattern: "processed/{topic}.json"
+    purpose: "処理済み管理(copy 設定時の重複収集防止。収集元ファイル識別子 + 処理済み判定日時を追記)"
+    content_type: "application/json"
+    operations: ["GET", "PUT"]
+    max_size: "10MB"
+  - path_pattern: "config.yaml"
+    purpose: "収集ソース定義・認証情報参照・ポーリング間隔の読込"
+    content_type: "application/yaml"
+    operations: ["GET"]
+    max_size: "1MB"

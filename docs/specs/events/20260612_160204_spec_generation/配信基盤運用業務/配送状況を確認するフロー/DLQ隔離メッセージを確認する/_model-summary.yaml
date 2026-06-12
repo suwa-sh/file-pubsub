@@ -1,0 +1,58 @@
+# _model-summary.yaml
+# RDB/KVS は使用しない。永続化はローカルファイルシステムのみ(tables は空、object_storage にパス設計を記述)
+uc: "DLQ隔離メッセージを確認する"
+business: "配信基盤運用業務"
+buc: "配送状況を確認するフロー"
+
+models:
+  - name: "DlqStatusArgs"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "request"
+    rdra_info: "DLQ"
+  - name: "StatusQuery"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-usecase"
+    type: "query"
+    rdra_info: "DLQ"
+  - name: "DlqEntry"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-domain"
+    type: "entity"
+    rdra_info: "DLQ"
+  - name: "ManifestEntry"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-domain"
+    type: "entity"
+    rdra_info: "Manifest"
+  - name: "DlqRecord"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-gateway"
+    type: "record"
+    rdra_info: "DLQ"
+  - name: "DlqTable"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "view-model"
+    rdra_info: "DLQ"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "dlq/{topic}/{message_id}"
+    purpose: "リトライ上限超過で隔離されたメッセージの実体の確認(読取のみ)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"
+  - path_pattern: "dlq/{topic}/{message_id}.meta.json"
+    purpose: "隔離情報(隔離理由・失敗回数・隔離日時)の読取"
+    content_type: "application/json"
+    operations: ["GET"]
+    max_size: "1MB"
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "dlq 記録・リトライ回数の突き合わせ(配送状態の正は Manifest)"
+    content_type: "application/json"
+    operations: ["GET"]
+    max_size: "1MB"

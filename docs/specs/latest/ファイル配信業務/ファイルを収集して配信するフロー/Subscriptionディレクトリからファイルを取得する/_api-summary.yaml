@@ -1,0 +1,8 @@
+# _api-summary.yaml
+# 本システムの HTTP API は /metrics・/healthz のみ(別 UC)。この UC に HTTP API・非同期イベントはない。
+# 外部 IF はファイルシステム契約(Subscription ディレクトリ)であり OpenAPI の対象外。
+uc: "Subscriptionディレクトリからファイルを取得する"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+paths: []
+async_events: []

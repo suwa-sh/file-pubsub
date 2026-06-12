@@ -1,0 +1,12 @@
+初期構築 (trigger: rdra/nfr/arch 20260612)
+
+trigger_event:
+- rdra:20260612_150425_initial_build
+- nfr:20260612_153353_nfr_initial_build
+- arch:20260612_154833_arch_initial_build
+
+BUC.tsv の全 19 UC (2 業務 / 5 BUC) を対象に Spec を初期生成。
+GUI なし (tier-daemon-worker / tier-ops-cli の 2 ティア)。
+HTTP API は観測専用 2 エンドポイント (/healthz, /metrics)。
+非同期イベント (AsyncAPI 対象) なし — ディレクトリ + Manifest によるファイルベース Pub/Sub。
+RDB/KVS なし — 永続化はファイルレイアウト + メッセージ別 JSON Manifest (object-storage-schema.yaml)。

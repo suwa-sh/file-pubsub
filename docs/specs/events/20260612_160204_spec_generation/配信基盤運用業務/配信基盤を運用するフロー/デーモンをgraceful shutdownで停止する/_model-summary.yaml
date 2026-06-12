@@ -1,0 +1,46 @@
+uc: "デーモンをgraceful shutdownで停止する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+
+models:
+  - name: "ShutdownSignalHandler(停止シグナルハンドラ)"
+    tier: "tier-daemon-worker"
+    layer: "runtime"
+    type: "command"
+    rdra_info: ""
+  - name: "InFlightMessage(処理中メッセージ)"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "Lock"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Lock"
+  - name: "FileStore(配置完了 / Manifest記録 / Lock解放)"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Lock"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "lock"
+    purpose: "データディレクトリ直下の lock ファイル。graceful shutdown 完了時の Lock 解放(削除)。次回起動を正常に行えるようにする"
+    content_type: "text/plain"
+    operations: ["DELETE"]
+    max_size: "4KB"
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "メッセージ別 JSON。停止前に処理中メッセージの配送結果(delivered / failed)を記録し、中途半端な状態を残さない"
+    content_type: "application/json"
+    operations: ["PUT"]
+    max_size: "1MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "処理中メッセージの AtomicWrite(一時名 → rename)を完了させる"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"

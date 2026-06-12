@@ -1,0 +1,7 @@
+# _api-summary.yaml
+# この UC に HTTP API はない(Consumer へのファイル受け渡しは Subscription ディレクトリのファイル IF)
+uc: "Subscriptionディレクトリから再送ファイルを取得する"
+business: "ファイル配信業務"
+buc: "ファイルを再送するフロー"
+paths: []
+async_events: []

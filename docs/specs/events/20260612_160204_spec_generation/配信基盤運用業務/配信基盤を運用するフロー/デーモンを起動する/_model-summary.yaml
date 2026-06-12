@@ -1,0 +1,46 @@
+uc: "デーモンを起動する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+
+models:
+  - name: "ServeCommand(serve サブコマンド引数)"
+    tier: "tier-ops-cli"
+    layer: "command"
+    type: "command"
+    rdra_info: ""
+  - name: "StartupSequence(起動シーケンス)"
+    tier: "tier-daemon-worker"
+    layer: "runtime"
+    type: "state"
+    rdra_info: ""
+  - name: "Config(設定)"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "設定"
+  - name: "Lock"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Lock"
+  - name: "LockFileStore(lock ファイル読み書き)"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Lock"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "config.yaml"
+    purpose: "--config で指定する単一YAML設定ファイル。起動時の設定読込・検証(ポーリング間隔 / metrics_port / Topic・Subscription定義)"
+    content_type: "application/yaml"
+    operations: ["GET"]
+    max_size: "1MB"
+  - path_pattern: "lock"
+    purpose: "データディレクトリ直下の lock ファイル。二重起動防止。ロック保持プロセス情報と取得日時を記録し、stale 判定に使う"
+    content_type: "text/plain"
+    operations: ["GET", "PUT"]
+    max_size: "4KB"

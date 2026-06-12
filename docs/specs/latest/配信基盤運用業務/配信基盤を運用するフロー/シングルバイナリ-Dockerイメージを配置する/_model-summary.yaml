@@ -1,0 +1,31 @@
+uc: "シングルバイナリ/Dockerイメージを配置する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+
+models:
+  - name: "DistributionArtifact(配布物)"
+    tier: "tier-ops-cli"
+    layer: "command"
+    type: "value-object"
+    rdra_info: ""
+  - name: "Config(設定YAML雛形)"
+    tier: "tier-ops-cli"
+    layer: "command"
+    type: "record"
+    rdra_info: "設定"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "config.yaml"
+    purpose: "--config で指定する単一YAML設定ファイル。配信構成管理の起点となる単一YAML設定の配置(導入時は雛形)"
+    content_type: "application/yaml"
+    operations: ["PUT"]
+    max_size: "1MB"
+  - path_pattern: "/opt/file-pubsub/file-pubsub"
+    purpose: "シングルバイナリの配置(追加ランタイム不要)。配置先は導入先の任意パス(例として /opt/file-pubsub/)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "100MB"

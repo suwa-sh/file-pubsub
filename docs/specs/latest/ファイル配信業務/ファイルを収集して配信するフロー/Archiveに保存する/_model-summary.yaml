@@ -1,0 +1,60 @@
+# _model-summary.yaml
+# データストアは RDB/KVS を使わない(全永続化はローカルファイルシステム)。
+# ファイルレイアウトは object_storage セクションでパス設計として表現する(datastore-rules.md)。
+uc: "Archiveに保存する"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+
+models:
+  - name: "ArchiveSaveCommand"
+    tier: "tier-daemon-worker"
+    layer: "usecase"
+    type: "command"
+    rdra_info: "Archiveファイル"
+  - name: "Message"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "ArchiveFile"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "entity"
+    rdra_info: "Archiveファイル"
+  - name: "RetentionDeadlineRule"
+    tier: "tier-daemon-worker"
+    layer: "domain"
+    type: "value-object"
+    rdra_info: "Archiveファイル"
+  - name: "ArchiveFileRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Archiveファイル"
+  - name: "ManifestRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Manifest"
+
+# RDB は使用しない
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "archive/{topic}/{message_id}"
+    purpose: "配信前必須保存(Topic 別 Archive)。message_id をファイル名に用い同名再出力でも上書きしない。再送(Replay)・監査・障害復旧・差分比較の基盤。保持期限 = 保存日時 + retention"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"
+  - path_pattern: "work/collect/{topic}/{message_id}"
+    purpose: "収集済みファイルの読込(archive 工程の入力)"
+    content_type: "application/octet-stream"
+    operations: ["GET", "DELETE"]
+    max_size: "500MB"
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "配送状態の更新(収集済 → Archive保存済。archive_path / saved_at / retention_deadline を付与)"
+    content_type: "application/json"
+    operations: ["GET", "PUT"]
+    max_size: "1MB"

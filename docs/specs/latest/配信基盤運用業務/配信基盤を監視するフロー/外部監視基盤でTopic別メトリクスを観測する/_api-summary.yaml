@@ -1,0 +1,5 @@
+uc: "外部監視基盤でTopic別メトリクスを観測する"
+business: "配信基盤運用業務"
+buc: "配信基盤を監視するフロー"
+paths: []
+async_events: []

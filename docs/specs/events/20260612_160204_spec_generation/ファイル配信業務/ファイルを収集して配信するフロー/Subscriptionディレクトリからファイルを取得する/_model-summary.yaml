@@ -1,0 +1,36 @@
+# _model-summary.yaml
+# データストアは RDB/KVS を使わない(全永続化はローカルファイルシステム)。
+# ファイルレイアウトは object_storage セクションでパス設計として表現する(datastore-rules.md)。
+# この UC は外部 IF 仕様であり、本システム側は配置保証(Fan-out/Replay 配置済みファイルの契約)のみ。
+uc: "Subscriptionディレクトリからファイルを取得する"
+business: "ファイル配信業務"
+buc: "ファイルを収集して配信するフロー"
+
+models:
+  - name: "SubscriptionDirectoryContract"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "value-object"
+    rdra_info: "Subscription"
+  - name: "SubscriptionFileRecord"
+    tier: "tier-daemon-worker"
+    layer: "gateway"
+    type: "record"
+    rdra_info: "Subscription"
+
+# RDB は使用しない
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "Consumer が従来手段で取得・削除する配信ファイル(外部 IF)。正式名は常に完全(AtomicWrite)。取得・削除は他 Subscription と Manifest に影響しない。GET/DELETE の操作主体は Consumer システム"
+    content_type: "application/octet-stream"
+    operations: ["GET", "DELETE"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}.tmp"
+    purpose: "書き込み中の一時名ファイル(Consumer の取得対象外であることを契約として明示)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"

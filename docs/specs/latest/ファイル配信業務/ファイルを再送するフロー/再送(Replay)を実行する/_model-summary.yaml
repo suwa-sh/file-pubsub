@@ -1,0 +1,68 @@
+# _model-summary.yaml
+# RDB/KVS は使用しない。永続化はローカルファイルシステムのみ(tables は空、object_storage にパス設計を記述)
+uc: "再送(Replay)を実行する"
+business: "ファイル配信業務"
+buc: "ファイルを再送するフロー"
+
+models:
+  - name: "ReplayArgs"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "request"
+    rdra_info: "Topic、メッセージ、Subscription"
+  - name: "ReplayCommand"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-usecase"
+    type: "command"
+    rdra_info: "Manifest"
+  - name: "Message"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-domain"
+    type: "entity"
+    rdra_info: "メッセージ"
+  - name: "ManifestEntry"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-domain"
+    type: "entity"
+    rdra_info: "Manifest"
+  - name: "ArchiveFileRecord"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-gateway"
+    type: "record"
+    rdra_info: "Archiveファイル"
+  - name: "SubscriptionPlacement"
+    tier: "tier-daemon-worker"
+    layer: "L-daemon-gateway"
+    type: "record"
+    rdra_info: "Subscription"
+  - name: "ReplayResultSummary"
+    tier: "tier-ops-cli"
+    layer: "L-cli-command"
+    type: "view-model"
+    rdra_info: "Manifest"
+
+tables: []
+
+kvs: []
+
+object_storage:
+  - path_pattern: "archive/{topic}/{message_id}"
+    purpose: "再送対象の読出元(Topic 別 Archive。message_id 完全一致または収集時刻の期間で抽出)"
+    content_type: "application/octet-stream"
+    operations: ["GET"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}.tmp"
+    purpose: "AtomicWrite の一時名書込(条件「AtomicWrite配置」。rename 前の中間ファイル)"
+    content_type: "application/octet-stream"
+    operations: ["PUT", "DELETE"]
+    max_size: "500MB"
+  - path_pattern: "{subscription.directory}/{original_file_name}"
+    purpose: "宛先 Subscription への再配置(一時名から rename。正式名は常に完全な内容)"
+    content_type: "application/octet-stream"
+    operations: ["PUT"]
+    max_size: "500MB"
+  - path_pattern: "manifest/{message_id}.json"
+    purpose: "再送(Replay)記録の追記・Subscription別配送状態と配送日時の更新(条件「Replay記録」、CTR-003)"
+    content_type: "application/json"
+    operations: ["GET", "PUT"]
+    max_size: "1MB"

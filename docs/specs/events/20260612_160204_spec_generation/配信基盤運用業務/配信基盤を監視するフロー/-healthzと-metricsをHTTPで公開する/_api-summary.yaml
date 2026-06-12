@@ -1,0 +1,42 @@
+uc: "/healthzと/metricsをHTTPで公開する"
+business: "配信基盤運用業務"
+buc: "配信基盤を監視するフロー"
+paths:
+  - method: "GET"
+    path: "/healthz"
+    summary: "死活監視エンドポイント。デーモン稼働中に HTTP 200 を返す(死活はステータスコードで判定、ボディに契約なし)"
+    response:
+      status: 200
+      content_type: "text/plain"
+      schema: "HealthzResponse"
+  - method: "GET"
+    path: "/metrics"
+    summary: "Prometheus テキスト形式の Topic 別メトリクス公開(最終収集時刻 / 処理件数 / 配信失敗数 / DLQ件数 / 滞留数。ラベルは topic のみ)"
+    response:
+      status: 200
+      content_type: "text/plain; version=0.0.4"
+      schema: "PrometheusTextFormat"
+async_events: []
+schemas:
+  - name: "HealthzResponse"
+    properties:
+      - name: "body"
+        type: "string"
+        required: false
+  - name: "PrometheusTextFormat"
+    properties:
+      - name: "file_pubsub_last_collect_timestamp_seconds"
+        type: "gauge(label: topic)"
+        required: true
+      - name: "file_pubsub_processed_total"
+        type: "counter(label: topic)"
+        required: true
+      - name: "file_pubsub_delivery_failure_total"
+        type: "counter(label: topic)"
+        required: true
+      - name: "file_pubsub_dlq_count"
+        type: "gauge(label: topic)"
+        required: true
+      - name: "file_pubsub_backlog_count"
+        type: "gauge(label: topic)"
+        required: true

@@ -1,0 +1,5 @@
+uc: "デーモンをgraceful shutdownで停止する"
+business: "配信基盤運用業務"
+buc: "配信基盤を運用するフロー"
+paths: []
+async_events: []
