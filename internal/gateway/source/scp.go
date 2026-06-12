@@ -12,23 +12,22 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// SCP collects files over plain SSH sessions for servers whose SSH daemon
-// does not enable the SFTP subsystem. List / Fetch / Remove run POSIX shell
-// commands (find + stat / cat / rm) in one session each, so the remote
-// account needs a shell and GNU coreutils/findutils (the Linux mainstream;
-// stat -c is not BSD-compatible). File names containing a newline are not
-// supported by the list parsing. Size and mtime come from stat, so the
-// stability check works the same as with the other connectors.
+// SCP は SSH デーモンが SFTP サブシステムを有効にしていないサーバ向けに、
+// 素の SSH セッションでファイルを収集する。List / Fetch / Remove はそれぞれ
+// 1 セッションずつ POSIX シェルコマンド (find + stat / cat / rm) を実行するため、
+// リモートアカウントにはシェルと GNU coreutils/findutils が必要 (Linux 主流。
+// stat -c は BSD 非互換)。改行を含むファイル名は一覧のパースが対応していない。
+// サイズと mtime は stat 由来なので、安定判定は他のコネクタと同様に機能する。
 type SCP struct {
 	opts Options
 	ssh  *ssh.Client
 }
 
-// NewSCP returns an SCP connector. The connection is established lazily on
-// first use so construction itself never touches the network.
+// NewSCP は SCP コネクタを返す。接続は初回利用時に遅延確立されるため、
+// 生成自体はネットワークに触れない。
 func NewSCP(o Options) *SCP { return &SCP{opts: o} }
 
-// connect dials the SSH connection once, reusing it afterwards.
+// connect は一度だけ SSH 接続を確立し、以降は再利用する。
 func (c *SCP) connect() (*ssh.Client, error) {
 	if c.ssh != nil {
 		return c.ssh, nil
@@ -41,8 +40,8 @@ func (c *SCP) connect() (*ssh.Client, error) {
 	return conn, nil
 }
 
-// run executes one command in a fresh SSH session and returns its stdout.
-// Stderr is folded into the error so collect_failed logs carry the cause.
+// run は新規 SSH セッションでコマンドを 1 つ実行し、stdout を返す。
+// stderr はエラーに畳み込み、collect_failed ログが原因を保持できるようにする。
 func (c *SCP) run(cmd string) ([]byte, error) {
 	conn, err := c.connect()
 	if err != nil {
@@ -62,13 +61,13 @@ func (c *SCP) run(cmd string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-// shellQuote wraps s in single quotes for safe use in a remote shell command.
+// shellQuote はリモートシェルコマンドで安全に使えるよう s をシングルクォートで囲む。
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// List returns the regular files directly under the source directory using
-// find + stat ("size mtime name" per line).
+// List は find + stat (1 行ごとに "size mtime name") を使ってソースディレクトリ
+// 直下の通常ファイルを返す。
 func (c *SCP) List(ctx context.Context) ([]FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -85,7 +84,7 @@ func (c *SCP) List(ctx context.Context) ([]FileInfo, error) {
 	return files, nil
 }
 
-// parseSCPList parses "size mtime ./name" stat lines into FileInfo.
+// parseSCPList は "size mtime ./name" 形式の stat 行を FileInfo にパースする。
 func parseSCPList(out string) ([]FileInfo, error) {
 	var files []FileInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -113,11 +112,10 @@ func parseSCPList(out string) ([]FileInfo, error) {
 	return files, nil
 }
 
-// Fetch streams the remote file with cat into destDir under a temp name,
-// verifies the copied size against a fresh stat and renames to the final
-// name (LR-303). The size is read in the same session batch as the cat, so a
-// concurrent rewrite is caught as a mismatch (the file is already
-// stability-checked before Fetch is called).
+// Fetch は cat でリモートファイルを一時名のまま destDir にストリームし、コピー後の
+// サイズを直前の stat と突き合わせて検証してから最終名にリネームする (LR-303)。
+// サイズは cat と同じセッションバッチで読むため、並行する書き換えは不一致として
+// 検出される (Fetch が呼ばれる前にファイルは安定判定済み)。
 func (c *SCP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -167,7 +165,7 @@ func (c *SCP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	return local, nil
 }
 
-// Remove deletes the original file after archive save success (delete handling).
+// Remove は archive 保存成功後に元ファイルを削除する (delete 扱い)。
 func (c *SCP) Remove(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -181,7 +179,7 @@ func (c *SCP) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// Close shuts the SSH connection if one was opened.
+// Close は SSH 接続が開かれていれば閉じる。
 func (c *SCP) Close() error {
 	if c.ssh == nil {
 		return nil

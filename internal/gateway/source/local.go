@@ -8,17 +8,17 @@ import (
 	"path/filepath"
 )
 
-// Local collects files from a local directory.
+// Local はローカルディレクトリからファイルを収集する。
 type Local struct {
 	dir string
 }
 
-// NewLocal returns a connector over the local directory dir.
+// NewLocal はローカルディレクトリ dir に対するコネクタを返す。
 func NewLocal(dir string) *Local {
 	return &Local{dir: dir}
 }
 
-// List returns the regular files directly under the source directory.
+// List はソースディレクトリ直下の通常ファイルを返す。
 func (l *Local) List(ctx context.Context) ([]FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -41,8 +41,8 @@ func (l *Local) List(ctx context.Context) ([]FileInfo, error) {
 	return files, nil
 }
 
-// Fetch copies the source file into destDir under a temp name, verifies the
-// copied size against the source, then renames to the final name (LR-303).
+// Fetch はソースファイルを一時名で destDir にコピーし、コピー後のサイズを
+// ソースと突き合わせて検証してから最終名にリネームする (LR-303)。
 func (l *Local) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -90,7 +90,7 @@ func (l *Local) Fetch(ctx context.Context, name, destDir string) (string, error)
 	return dst, nil
 }
 
-// Remove deletes the original file after archive save success (delete handling).
+// Remove は archive 保存成功後に元ファイルを削除する (delete 扱い)。
 func (l *Local) Remove(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -104,11 +104,11 @@ func (l *Local) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// Close releases nothing for the local connector.
+// Close はローカルコネクタでは解放するものがない。
 func (l *Local) Close() error { return nil }
 
-// validateName rejects names that escape the source directory; List only
-// yields plain file names.
+// validateName はソースディレクトリ外へ抜けるファイル名を拒否する。
+// List は素のファイル名しか返さない。
 func validateName(name string) error {
 	if name == "" || name != filepath.Base(name) {
 		return fmt.Errorf("invalid file name %q", name)

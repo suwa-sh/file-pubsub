@@ -12,23 +12,21 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// sshDefaultPort is the SSH default for both sftp and scp (config port 0).
+// sshDefaultPort は sftp / scp 共通の SSH 既定ポート (設定 port 0 のとき)。
 const sshDefaultPort = 22
 
-// sshTimeout bounds the TCP dial and the SSH handshake.
+// sshTimeout は TCP 接続と SSH ハンドシェイクの上限時間。
 const sshTimeout = 30 * time.Second
 
-// sshClientConfig builds the SSH client configuration shared by the sftp and
-// scp connectors from the source auth settings (E-005): key file auth (with
-// the password reused as the passphrase when the key is encrypted) and/or
-// password auth.
+// sshClientConfig は sftp / scp コネクタが共有する SSH クライアント設定を、
+// ソースの認証設定 (E-005) から構築する: 鍵ファイル認証 (鍵が暗号化されている
+// 場合は password をパスフレーズとして再利用) および/またはパスワード認証。
 //
-// Security constraint: host key verification is intentionally skipped with
-// ssh.InsecureIgnoreHostKey(). The configuration schema keeps no host-key
-// material (config.go Auth), and the target legacy hosts rarely publish
-// managed known_hosts. The trade-off — a man-in-the-middle on the network
-// path can impersonate the source server — is documented in the README
-// security notes; run file-pubsub next to the source on a trusted segment.
+// セキュリティ上の制約: ホスト鍵検証は ssh.InsecureIgnoreHostKey() で意図的に
+// スキップしている。設定スキーマはホスト鍵情報を保持せず (config.go Auth)、
+// 対象のレガシーホストが管理された known_hosts を公開していることは稀なため。
+// トレードオフ — 経路上の中間者がソースサーバになりすませる — は README の
+// セキュリティ注記に記載済み。file-pubsub はソースに近い信頼セグメントで動かすこと。
 func sshClientConfig(o Options) (*ssh.ClientConfig, error) {
 	var methods []ssh.AuthMethod
 	if o.KeyFile != "" {
@@ -55,12 +53,12 @@ func sshClientConfig(o Options) (*ssh.ClientConfig, error) {
 	return &ssh.ClientConfig{
 		User:            o.Username,
 		Auth:            methods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // see the constraint comment above
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 上記の制約コメントを参照
 		Timeout:         sshTimeout,
 	}, nil
 }
 
-// dialSSH opens the SSH client connection shared by the sftp and scp connectors.
+// dialSSH は sftp / scp コネクタが共有する SSH クライアント接続を開く。
 func dialSSH(o Options) (*ssh.Client, error) {
 	cfg, err := sshClientConfig(o)
 	if err != nil {
@@ -74,20 +72,20 @@ func dialSSH(o Options) (*ssh.Client, error) {
 	return client, nil
 }
 
-// SFTP collects files from a directory on an SSH server via the SFTP
-// subsystem. Prefer this connector over ftp (encrypted) and scp (needs a
-// shell) when the server supports it.
+// SFTP は SSH サーバの SFTP サブシステム経由でディレクトリからファイルを収集する。
+// サーバが対応していれば ftp (非暗号) や scp (シェルが必要) よりこのコネクタを
+// 優先すること。
 type SFTP struct {
 	opts Options
 	ssh  *ssh.Client
 	sftp *sftp.Client
 }
 
-// NewSFTP returns an SFTP connector. The connection is established lazily on
-// first use so construction itself never touches the network.
+// NewSFTP は SFTP コネクタを返す。接続は初回利用時に遅延確立されるため、
+// 生成自体はネットワークに触れない。
 func NewSFTP(o Options) *SFTP { return &SFTP{opts: o} }
 
-// connect dials and opens the SFTP subsystem once, reusing it afterwards.
+// connect は一度だけ接続して SFTP サブシステムを開き、以降は再利用する。
 func (c *SFTP) connect() (*sftp.Client, error) {
 	if c.sftp != nil {
 		return c.sftp, nil
@@ -105,7 +103,7 @@ func (c *SFTP) connect() (*sftp.Client, error) {
 	return client, nil
 }
 
-// List returns the files (name, size, mtime) in the source directory.
+// List はソースディレクトリ内のファイル (名前・サイズ・mtime) を返す。
 func (c *SFTP) List(ctx context.Context) ([]FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -128,8 +126,8 @@ func (c *SFTP) List(ctx context.Context) ([]FileInfo, error) {
 	return files, nil
 }
 
-// Fetch downloads name into destDir under a temp name, verifies the copied
-// size against the remote stat and renames to the final name (LR-303).
+// Fetch は name を一時名で destDir にダウンロードし、コピー後のサイズをリモートの
+// stat と突き合わせて検証してから最終名にリネームする (LR-303)。
 func (c *SFTP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -158,7 +156,7 @@ func (c *SFTP) Fetch(ctx context.Context, name, destDir string) (string, error) 
 	return local, nil
 }
 
-// Remove deletes the original file after archive save success (delete handling).
+// Remove は archive 保存成功後に元ファイルを削除する (delete 扱い)。
 func (c *SFTP) Remove(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -176,7 +174,7 @@ func (c *SFTP) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// Close shuts the SFTP subsystem and the SSH connection if they were opened.
+// Close は SFTP サブシステムと SSH 接続が開かれていれば閉じる。
 func (c *SFTP) Close() error {
 	var err error
 	if c.sftp != nil {

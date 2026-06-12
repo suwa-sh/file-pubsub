@@ -27,11 +27,11 @@ type testEnv struct {
 	clock   *fakeClock
 	srcDir  string
 	dataDir string
-	subDirs map[string]string // subscription name -> directory
+	subDirs map[string]string // サブスクリプション名 -> ディレクトリ
 }
 
-// newEnv builds a pipeline over t.TempDir with one topic "orders" (local
-// source, subscriptions current / next, stability interval 10s).
+// newEnv は t.TempDir 上にトピック "orders" 1 件 (local ソース、
+// サブスクリプション current / next、安定判定間隔 10 秒) のパイプラインを構築する。
 func newEnv(t *testing.T, handling string) *testEnv {
 	t.Helper()
 	base := t.TempDir()
@@ -82,8 +82,8 @@ func (e *testEnv) writeSource(name, content string) {
 	}
 }
 
-// collectStable runs two collect passes separated by the stability interval
-// so a freshly written source file is observed stable and collected.
+// collectStable は安定判定間隔を挟んで収集パスを 2 回実行し、書き込んだ直後の
+// ソースファイルが安定と観測されて収集されるようにする。
 func (e *testEnv) collectStable() {
 	e.t.Helper()
 	e.p.Collect(context.Background())
@@ -109,8 +109,8 @@ func (e *testEnv) singleManifest() *store.Manifest {
 	return ms[0]
 }
 
-// seedArchived plants an archived message directly (archive file + manifest),
-// skipping the collect stage.
+// seedArchived は collect ステージを経由せず、archived 状態のメッセージ
+// (アーカイブファイル + マニフェスト) を直接植え付ける。
 func (e *testEnv) seedArchived(name, content string) *store.Manifest {
 	e.t.Helper()
 	msg := domain.NewMessage(e.clock.Now(), "orders", name)
@@ -127,8 +127,8 @@ func (e *testEnv) seedArchived(name, content string) *store.Manifest {
 	return m
 }
 
-// breakSubscription points the subscription directory below a regular file so
-// every placement into it fails (MkdirAll on a file path).
+// breakSubscription はサブスクリプションディレクトリを通常ファイルの配下に
+// 向け、そこへの配置がすべて失敗するようにする (ファイルパスへの MkdirAll)。
 func (e *testEnv) breakSubscription(name string) {
 	e.t.Helper()
 	blocker := filepath.Join(e.t.TempDir(), "blocker")

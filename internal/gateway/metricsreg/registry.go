@@ -1,8 +1,7 @@
-// Package metricsreg aggregates the five per-topic metrics in memory and
-// exposes them in Prometheus format (LR-302, SP-005). Values are not
-// persisted: a restart resets them and the external monitoring stack keeps
-// history. Metric names are an external contract (data-visualization.md):
-// keep them backward compatible.
+// Package metricsreg は topic 単位の 5 系列のメトリクスをメモリ上で集計し、
+// Prometheus 形式で公開する (LR-302, SP-005)。値は永続化されない: 再起動で
+// リセットされ、履歴は外部の監視スタックが保持する。メトリクス名は外部契約
+// (data-visualization.md) なので後方互換を維持すること。
 package metricsreg
 
 import (
@@ -13,7 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Registry holds the five per-topic metric series (label: topic only).
+// Registry は topic 単位の 5 系列のメトリクスを保持する (ラベルは topic のみ)。
 type Registry struct {
 	registry        *prometheus.Registry
 	lastCollect     *prometheus.GaugeVec
@@ -23,7 +22,7 @@ type Registry struct {
 	backlogCount    *prometheus.GaugeVec
 }
 
-// New builds the registry with the five metric series registered.
+// New は 5 系列のメトリクスを登録済みのレジストリを生成する。
 func New() *Registry {
 	r := &Registry{registry: prometheus.NewRegistry()}
 	r.lastCollect = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -50,32 +49,32 @@ func New() *Registry {
 	return r
 }
 
-// SetLastCollected records the last successful collect time of a topic.
+// SetLastCollected は topic の最終収集成功時刻を記録する。
 func (r *Registry) SetLastCollected(topic string, t time.Time) {
 	r.lastCollect.WithLabelValues(topic).Set(float64(t.Unix()))
 }
 
-// IncProcessed increments the processed message count of a topic.
+// IncProcessed は topic の処理済みメッセージ数をインクリメントする。
 func (r *Registry) IncProcessed(topic string) {
 	r.processed.WithLabelValues(topic).Inc()
 }
 
-// IncDeliveryFailure increments the delivery failure count of a topic.
+// IncDeliveryFailure は topic の配信失敗数をインクリメントする。
 func (r *Registry) IncDeliveryFailure(topic string) {
 	r.deliveryFailure.WithLabelValues(topic).Inc()
 }
 
-// SetDLQCount sets the current DLQ message count of a topic.
+// SetDLQCount は topic の現在の DLQ メッセージ数を設定する。
 func (r *Registry) SetDLQCount(topic string, n int) {
 	r.dlqCount.WithLabelValues(topic).Set(float64(n))
 }
 
-// SetBacklogCount sets the current backlog (undelivered) count of a topic.
+// SetBacklogCount は topic の現在の未配信 (backlog) 数を設定する。
 func (r *Registry) SetBacklogCount(topic string, n int) {
 	r.backlogCount.WithLabelValues(topic).Set(float64(n))
 }
 
-// Handler returns the /metrics handler serving Prometheus text format.
+// Handler は Prometheus テキスト形式を返す /metrics ハンドラを返す。
 func (r *Registry) Handler() http.Handler {
 	return promhttp.HandlerFor(r.registry, promhttp.HandlerOpts{})
 }

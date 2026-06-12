@@ -1,7 +1,6 @@
-// Package source provides the collection connector interface. It is the only
-// interface in the system (LP-301, CLP-001): local / ftp / sftp / scp
-// connectors are interchangeable behind it and downstream stages never depend
-// on the source type.
+// Package source は収集コネクタのインターフェースを提供する。システム内で唯一の
+// インターフェースであり (LP-301, CLP-001)、local / ftp / sftp / scp の各コネクタは
+// この背後で交換可能で、下流の工程はソース種別に依存しない。
 package source
 
 import (
@@ -10,28 +9,28 @@ import (
 	"time"
 )
 
-// FileInfo is one source file observation (name, size, mtime) used by the
-// stability check.
+// FileInfo はソースファイル 1 件の観測結果 (名前・サイズ・mtime) で、
+// 安定判定に使う。
 type FileInfo struct {
 	Name    string
 	Size    int64
 	ModTime time.Time
 }
 
-// Connector is the common collection connector interface (C-01).
+// Connector は収集コネクタの共通インターフェース (C-01)。
 type Connector interface {
-	// List returns the files (name, size, mtime) in the source directory.
+	// List はソースディレクトリ内のファイル (名前・サイズ・mtime) を返す。
 	List(ctx context.Context) ([]FileInfo, error)
-	// Fetch downloads name into destDir under a temp name, verifies the copy,
-	// renames it to its final name (LR-303) and returns the local path.
+	// Fetch は name を一時名で destDir にダウンロードし、コピーを検証して
+	// 最終名にリネームし (LR-303)、ローカルパスを返す。
 	Fetch(ctx context.Context, name, destDir string) (string, error)
-	// Remove deletes the original file. Call only after archive save success
-	// is confirmed (delete handling, LR-303).
+	// Remove は元ファイルを削除する。archive 保存の成功を確認した後にのみ
+	// 呼び出すこと (delete 扱い, LR-303)。
 	Remove(ctx context.Context, name string) error
 	Close() error
 }
 
-// Options selects and configures a connector implementation.
+// Options はコネクタ実装の選択と設定を行う。
 type Options struct {
 	Type      string // local / ftp / sftp / scp
 	Host      string
@@ -42,9 +41,9 @@ type Options struct {
 	KeyFile   string
 }
 
-// New returns the connector for o.Type. Remote connectors connect lazily on
-// first use, so a connection failure surfaces on List / Fetch / Remove (and
-// is logged as collect_failed for the topic), not here.
+// New は o.Type に対応するコネクタを返す。リモートコネクタは初回利用時に遅延接続
+// するため、接続失敗はここではなく List / Fetch / Remove で表面化する (topic の
+// collect_failed としてログに記録される)。
 func New(o Options) (Connector, error) {
 	switch o.Type {
 	case "local":

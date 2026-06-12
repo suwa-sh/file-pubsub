@@ -9,8 +9,8 @@ import (
 	"strconv"
 )
 
-// hostPort joins the configured host with the explicit port, falling back to
-// the protocol default (ftp 21, sftp/scp 22) when port is 0 (config.go Source).
+// hostPort は設定されたホストと明示ポートを結合する。port が 0 のときは
+// プロトコル既定値 (ftp 21, sftp/scp 22) にフォールバックする (config.go Source)。
 func hostPort(host string, port, defaultPort int) string {
 	if port == 0 {
 		port = defaultPort
@@ -18,12 +18,11 @@ func hostPort(host string, port, defaultPort int) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
-// writeTempAndRename streams src into destDir/name with the shared download
-// protocol of every connector (LR-303): write under a temp name, run finish
-// (e.g. confirm the FTP transfer-complete reply), verify the copied size
-// against want (-1 skips the check when the source size is unknown), then
-// rename to the final name. On any failure the temp file is removed so an
-// interrupted download never flows downstream.
+// writeTempAndRename は全コネクタ共通のダウンロードプロトコル (LR-303) で src を
+// destDir/name に書き出す: 一時名で書き込み、finish を実行し (例: FTP の転送完了
+// 応答の確認)、コピー後のサイズを want と突き合わせ (-1 はソースサイズ不明として
+// 検証をスキップ)、最終名にリネームする。失敗時は一時ファイルを削除するため、
+// 中断されたダウンロードが下流に流れることはない。
 func writeTempAndRename(name, destDir string, src io.Reader, want int64, finish func() error) (string, error) {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return "", err

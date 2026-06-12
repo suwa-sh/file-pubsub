@@ -17,7 +17,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func TestHostPort(t *testing.T) {
+func TestHostPort_ポート指定の組み合わせごとに_既定値補完されたアドレスが返ること(t *testing.T) {
+	// Arrange
 	cases := []struct {
 		host        string
 		port, deflt int
@@ -29,15 +30,24 @@ func TestHostPort(t *testing.T) {
 		{"::1", 0, 22, "[::1]:22"},
 	}
 	for _, c := range cases {
-		if got := hostPort(c.host, c.port, c.deflt); got != c.want {
+		// Act
+		got := hostPort(c.host, c.port, c.deflt)
+
+		// Assert
+		if got != c.want {
 			t.Errorf("hostPort(%q, %d, %d) = %q, want %q", c.host, c.port, c.deflt, got, c.want)
 		}
 	}
 }
 
-func TestWriteTempAndRename(t *testing.T) {
+func TestWriteTempAndRename_サイズが一致する場合_最終名で書き出され一時ファイルが残らないこと(t *testing.T) {
+	// Arrange
 	destDir := filepath.Join(t.TempDir(), "work")
+
+	// Act
 	got, err := writeTempAndRename("orders.csv", destDir, strings.NewReader("id,qty\n1,2\n"), 11, nil)
+
+	// Assert
 	if err != nil {
 		t.Fatalf("writeTempAndRename: %v", err)
 	}
@@ -56,31 +66,47 @@ func TestWriteTempAndRename(t *testing.T) {
 	}
 }
 
-func TestWriteTempAndRename_SizeMismatch(t *testing.T) {
+func TestWriteTempAndRename_サイズが不一致の場合_失敗してファイルが残らないこと(t *testing.T) {
+	// Arrange
 	destDir := t.TempDir()
-	if _, err := writeTempAndRename("f.csv", destDir, strings.NewReader("abc"), 99, nil); err == nil {
+
+	// Act
+	_, err := writeTempAndRename("f.csv", destDir, strings.NewReader("abc"), 99, nil)
+
+	// Assert
+	if err == nil {
 		t.Fatal("size mismatch must fail")
 	}
 	assertNoFiles(t, destDir)
 }
 
-func TestWriteTempAndRename_UnknownSizeSkipsCheck(t *testing.T) {
-	if _, err := writeTempAndRename("f.csv", t.TempDir(), strings.NewReader("abc"), -1, nil); err != nil {
+func TestWriteTempAndRename_サイズ不明の場合_サイズ検証がスキップされること(t *testing.T) {
+	// Arrange & Act
+	_, err := writeTempAndRename("f.csv", t.TempDir(), strings.NewReader("abc"), -1, nil)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("want = -1 must skip the size check: %v", err)
 	}
 }
 
-func TestWriteTempAndRename_FinishError(t *testing.T) {
+func TestWriteTempAndRename_finishがエラーの場合_失敗してファイルが残らないこと(t *testing.T) {
+	// Arrange
 	destDir := t.TempDir()
 	finish := func() error { return errors.New("transfer not complete") }
-	if _, err := writeTempAndRename("f.csv", destDir, strings.NewReader("abc"), 3, finish); err == nil {
+
+	// Act
+	_, err := writeTempAndRename("f.csv", destDir, strings.NewReader("abc"), 3, finish)
+
+	// Assert
+	if err == nil {
 		t.Fatal("finish error must fail the fetch")
 	}
 	assertNoFiles(t, destDir)
 }
 
-// fakeReadCloser counts Close calls so the tests can assert the FTP data
-// connection is released on every path.
+// fakeReadCloser は Close 呼び出し回数を数え、FTP データコネクションが
+// あらゆる経路で解放されることをテストで検証できるようにする。
 type fakeReadCloser struct {
 	io.Reader
 	closeCalls int
@@ -92,13 +118,18 @@ func (f *fakeReadCloser) Close() error {
 	return f.closeErr
 }
 
-// TestDownloadAndClose_ClosesOnEveryPath guards the FTP data-connection
-// lifecycle: resp must be closed exactly once whether the download succeeds,
-// the copy fails mid-stream or the size check rejects the result.
-func TestDownloadAndClose_ClosesOnEveryPath(t *testing.T) {
-	t.Run("success closes once", func(t *testing.T) {
+// FTP データコネクションのライフサイクルを保証するテスト: ダウンロード成功・
+// ストリーム途中のコピー失敗・サイズ検証の拒否のいずれでも resp はちょうど
+// 1 回 close されなければならない。
+func TestDownloadAndClose_成否いずれの経路でも_respがちょうど1回closeされること(t *testing.T) {
+	t.Run("成功した場合_1回closeされること", func(t *testing.T) {
+		// Arrange
 		resp := &fakeReadCloser{Reader: strings.NewReader("abc")}
+
+		// Act
 		got, err := downloadAndClose("f.csv", t.TempDir(), resp, 3)
+
+		// Assert
 		if err != nil {
 			t.Fatalf("downloadAndClose: %v", err)
 		}
@@ -109,10 +140,16 @@ func TestDownloadAndClose_ClosesOnEveryPath(t *testing.T) {
 			t.Errorf("closeCalls = %d, want 1", resp.closeCalls)
 		}
 	})
-	t.Run("size mismatch still closes", func(t *testing.T) {
+	t.Run("サイズ不一致の場合_それでも1回closeされること", func(t *testing.T) {
+		// Arrange
 		destDir := t.TempDir()
 		resp := &fakeReadCloser{Reader: strings.NewReader("abc")}
-		if _, err := downloadAndClose("f.csv", destDir, resp, 99); err == nil {
+
+		// Act
+		_, err := downloadAndClose("f.csv", destDir, resp, 99)
+
+		// Assert
+		if err == nil {
 			t.Fatal("size mismatch must fail")
 		}
 		if resp.closeCalls != 1 {
@@ -120,10 +157,16 @@ func TestDownloadAndClose_ClosesOnEveryPath(t *testing.T) {
 		}
 		assertNoFiles(t, destDir)
 	})
-	t.Run("read error still closes", func(t *testing.T) {
+	t.Run("読み込みエラーの場合_それでも1回closeされること", func(t *testing.T) {
+		// Arrange
 		destDir := t.TempDir()
 		resp := &fakeReadCloser{Reader: io.MultiReader(strings.NewReader("ab"), errReader{})}
-		if _, err := downloadAndClose("f.csv", destDir, resp, 3); err == nil {
+
+		// Act
+		_, err := downloadAndClose("f.csv", destDir, resp, 3)
+
+		// Assert
+		if err == nil {
 			t.Fatal("a mid-stream read error must fail the fetch")
 		}
 		if resp.closeCalls != 1 {
@@ -131,10 +174,16 @@ func TestDownloadAndClose_ClosesOnEveryPath(t *testing.T) {
 		}
 		assertNoFiles(t, destDir)
 	})
-	t.Run("close error fails the fetch once", func(t *testing.T) {
+	t.Run("closeがエラーの場合_fetchが失敗し二重closeされないこと", func(t *testing.T) {
+		// Arrange
 		destDir := t.TempDir()
 		resp := &fakeReadCloser{Reader: strings.NewReader("abc"), closeErr: errors.New("426 transfer aborted")}
-		if _, err := downloadAndClose("f.csv", destDir, resp, 3); err == nil {
+
+		// Act
+		_, err := downloadAndClose("f.csv", destDir, resp, 3)
+
+		// Assert
+		if err == nil {
 			t.Fatal("a failing transfer-complete reply must fail the fetch")
 		}
 		if resp.closeCalls != 1 {
@@ -144,12 +193,12 @@ func TestDownloadAndClose_ClosesOnEveryPath(t *testing.T) {
 	})
 }
 
-// errReader fails every Read, simulating a dropped data connection.
+// errReader はすべての Read を失敗させ、データコネクションの切断を擬似する。
 type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
 
-// assertNoFiles checks that no final or temp file leaked into dir.
+// assertNoFiles は dir に最終ファイルも一時ファイルもリークしていないことを検証する。
 func assertNoFiles(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -161,14 +210,19 @@ func assertNoFiles(t *testing.T, dir string) {
 	}
 }
 
-func TestFTPEntriesToFileInfo(t *testing.T) {
+func TestFTPEntriesToFileInfo_ディレクトリとリンクが混在する場合_通常ファイルだけが返ること(t *testing.T) {
+	// Arrange
 	now := time.Now()
 	entries := []*ftp.Entry{
 		{Name: "orders_1.csv", Type: ftp.EntryTypeFile, Size: 5, Time: now},
 		{Name: "subdir", Type: ftp.EntryTypeFolder},
 		{Name: "link", Type: ftp.EntryTypeLink},
 	}
+
+	// Act
 	files := ftpEntriesToFileInfo(entries)
+
+	// Assert
 	if len(files) != 1 {
 		t.Fatalf("files = %d, want 1 (directories and links skipped)", len(files))
 	}
@@ -177,8 +231,11 @@ func TestFTPEntriesToFileInfo(t *testing.T) {
 	}
 }
 
-func TestSSHClientConfig_Password(t *testing.T) {
+func TestSSHClientConfig_パスワードのみの場合_password認証1件で構成されること(t *testing.T) {
+	// Arrange & Act
 	cfg, err := sshClientConfig(Options{Type: "sftp", Username: "producer", Password: "secret"})
+
+	// Assert
 	if err != nil {
 		t.Fatalf("sshClientConfig: %v", err)
 	}
@@ -196,9 +253,14 @@ func TestSSHClientConfig_Password(t *testing.T) {
 	}
 }
 
-func TestSSHClientConfig_KeyFile(t *testing.T) {
+func TestSSHClientConfig_鍵ファイルのみの場合_公開鍵認証1件で構成されること(t *testing.T) {
+	// Arrange
 	keyPath := writeTestKey(t)
+
+	// Act
 	cfg, err := sshClientConfig(Options{Type: "scp", Username: "producer", KeyFile: keyPath})
+
+	// Assert
 	if err != nil {
 		t.Fatalf("sshClientConfig: %v", err)
 	}
@@ -207,9 +269,14 @@ func TestSSHClientConfig_KeyFile(t *testing.T) {
 	}
 }
 
-func TestSSHClientConfig_KeyFileAndPassword(t *testing.T) {
+func TestSSHClientConfig_鍵ファイルとパスワードの両方がある場合_認証2件で構成されること(t *testing.T) {
+	// Arrange
 	keyPath := writeTestKey(t)
+
+	// Act
 	cfg, err := sshClientConfig(Options{Type: "sftp", Username: "producer", KeyFile: keyPath, Password: "secret"})
+
+	// Assert
 	if err != nil {
 		t.Fatalf("sshClientConfig: %v", err)
 	}
@@ -218,23 +285,26 @@ func TestSSHClientConfig_KeyFileAndPassword(t *testing.T) {
 	}
 }
 
-func TestSSHClientConfig_Errors(t *testing.T) {
+func TestSSHClientConfig_認証情報が不正な場合_エラーになること(t *testing.T) {
+	// Arrange
+	garbage := filepath.Join(t.TempDir(), "garbage")
+	if err := os.WriteFile(garbage, []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act & Assert
 	if _, err := sshClientConfig(Options{Type: "sftp", Username: "producer"}); err == nil {
 		t.Error("missing password and key file must fail")
 	}
 	if _, err := sshClientConfig(Options{Type: "sftp", Username: "producer", KeyFile: "/nonexistent/key"}); err == nil {
 		t.Error("unreadable key file must fail")
 	}
-	garbage := filepath.Join(t.TempDir(), "garbage")
-	if err := os.WriteFile(garbage, []byte("not a key"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := sshClientConfig(Options{Type: "sftp", Username: "producer", KeyFile: garbage}); err == nil {
 		t.Error("unparsable key file must fail")
 	}
 }
 
-// writeTestKey generates an ed25519 private key in OpenSSH PEM format.
+// writeTestKey は OpenSSH PEM 形式の ed25519 秘密鍵を生成するヘルパー。
 func writeTestKey(t *testing.T) string {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -252,7 +322,8 @@ func writeTestKey(t *testing.T) string {
 	return path
 }
 
-func TestShellQuote(t *testing.T) {
+func TestShellQuote_特殊文字を含む入力の場合_安全にシングルクォートされること(t *testing.T) {
+	// Arrange
 	cases := map[string]string{
 		"/out/orders":    "'/out/orders'",
 		"with space":     "'with space'",
@@ -263,15 +334,24 @@ func TestShellQuote(t *testing.T) {
 		"日本語ファイル名.csv":   "'日本語ファイル名.csv'",
 	}
 	for in, want := range cases {
-		if got := shellQuote(in); got != want {
+		// Act
+		got := shellQuote(in)
+
+		// Assert
+		if got != want {
 			t.Errorf("shellQuote(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
-func TestParseSCPList(t *testing.T) {
+func TestParseSCPList_正常なstat行の場合_FileInfoにパースされること(t *testing.T) {
+	// Arrange
 	out := "5 1765500000 ./orders_1.csv\n1024 1765500060 ./with space.csv\n"
+
+	// Act
 	files, err := parseSCPList(out)
+
+	// Assert
 	if err != nil {
 		t.Fatalf("parseSCPList: %v", err)
 	}
@@ -286,8 +366,11 @@ func TestParseSCPList(t *testing.T) {
 	}
 }
 
-func TestParseSCPList_Empty(t *testing.T) {
+func TestParseSCPList_空出力の場合_0件になること(t *testing.T) {
+	// Arrange & Act
 	files, err := parseSCPList("")
+
+	// Assert
 	if err != nil {
 		t.Fatalf("parseSCPList: %v", err)
 	}
@@ -296,19 +379,26 @@ func TestParseSCPList_Empty(t *testing.T) {
 	}
 }
 
-func TestParseSCPList_Malformed(t *testing.T) {
-	for _, out := range []string{"oops\n", "x 1765500000 ./f\n", "5 y ./f\n", "5 1765500000 ./../escape\n"} {
-		if _, err := parseSCPList(out); err == nil {
+func TestParseSCPList_不正な行の場合_エラーになること(t *testing.T) {
+	// Arrange
+	malformed := []string{"oops\n", "x 1765500000 ./f\n", "5 y ./f\n", "5 1765500000 ./../escape\n"}
+
+	for _, out := range malformed {
+		// Act
+		_, err := parseSCPList(out)
+
+		// Assert
+		if err == nil {
 			t.Errorf("malformed line %q must fail", out)
 		}
 	}
 }
 
-// TestRemoteConnectors_NoNetworkChecks covers the checks every remote
-// connector performs before touching the network: context cancellation,
-// file-name validation and Close on a never-connected client. Real protocol
-// I/O is covered by the docker compose E2E environment.
-func TestRemoteConnectors_NoNetworkChecks(t *testing.T) {
+// すべてのリモートコネクタがネットワークに触れる前に行う検査を網羅するテスト:
+// context キャンセル、ファイル名検証、未接続クライアントへの Close。
+// 実プロトコル I/O は docker compose の E2E 環境でカバーする。
+func TestRemoteConnectors_未接続の場合_キャンセルとパストラバーサルが拒否されCloseがエラーにならないこと(t *testing.T) {
+	// Arrange
 	opts := Options{Host: "legacy-host01", Directory: "/out/orders", Username: "u", Password: "p"}
 	conns := map[string]Connector{
 		"ftp":  NewFTP(opts),
@@ -317,6 +407,8 @@ func TestRemoteConnectors_NoNetworkChecks(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
+
+	// Act & Assert
 	for typ, c := range conns {
 		if _, err := c.List(cancelled); err == nil {
 			t.Errorf("%s: cancelled context must abort List", typ)

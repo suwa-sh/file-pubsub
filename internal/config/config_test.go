@@ -45,6 +45,7 @@ topics:
         directory: /pub/customers/current
 `
 
+// writeConfig はテスト用の一時ディレクトリに config.yaml を書き出すヘルパー。
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -54,12 +55,16 @@ func writeConfig(t *testing.T, content string) string {
 	return path
 }
 
-func TestLoad_Valid(t *testing.T) {
+func TestLoad_正しい設定を読み込んだ場合_全項目が展開されて返ること(t *testing.T) {
+	// Arrange
 	t.Setenv("TEST_SFTP_USER", "legacy_user")
 	t.Setenv("TEST_SFTP_PASSWORD", "s3cret")
 	path := writeConfig(t, validYAML)
 
+	// Act
 	cfg, err := Load(path)
+
+	// Assert
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -84,7 +89,8 @@ func TestLoad_Valid(t *testing.T) {
 	}
 }
 
-func TestLoad_DefaultHandlingIsDelete(t *testing.T) {
+func TestLoad_元ファイルの扱いを省略した場合_deleteがデフォルトになること(t *testing.T) {
+	// Arrange
 	yaml := `
 polling_interval: 60
 archive_retention: 90
@@ -101,7 +107,12 @@ topics:
       - name: current
         directory: /pub/orders/current
 `
-	cfg, err := Load(writeConfig(t, yaml))
+	path := writeConfig(t, yaml)
+
+	// Act
+	cfg, err := Load(path)
+
+	// Assert
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -110,12 +121,17 @@ topics:
 	}
 }
 
-func TestLoad_UndefinedEnvVar(t *testing.T) {
+func TestLoad_未定義の環境変数を参照した場合_変数名つきのバリデーションエラーになること(t *testing.T) {
+	// Arrange
 	os.Unsetenv("TEST_UNDEFINED_VAR_XYZ")
 	yaml := strings.ReplaceAll(validYAML, "${TEST_SFTP_USER}", "${TEST_UNDEFINED_VAR_XYZ}")
 	t.Setenv("TEST_SFTP_PASSWORD", "s3cret")
+	path := writeConfig(t, yaml)
 
-	_, err := Load(writeConfig(t, yaml))
+	// Act
+	_, err := Load(path)
+
+	// Assert
 	var verrs ValidationErrors
 	if !errors.As(err, &verrs) {
 		t.Fatalf("want ValidationErrors, got %v", err)
@@ -125,7 +141,8 @@ func TestLoad_UndefinedEnvVar(t *testing.T) {
 	}
 }
 
-func TestLoad_AllErrorsReturnedTogether(t *testing.T) {
+func TestLoad_違反が複数ある場合_全エラーがまとめて返ること(t *testing.T) {
+	// Arrange
 	yaml := `
 polling_interval: 0
 archive_retention: 0
@@ -137,7 +154,12 @@ topics:
       type: bogus
     subscriptions: []
 `
-	_, err := Load(writeConfig(t, yaml))
+	path := writeConfig(t, yaml)
+
+	// Act
+	_, err := Load(path)
+
+	// Assert
 	var verrs ValidationErrors
 	if !errors.As(err, &verrs) {
 		t.Fatalf("want ValidationErrors, got %v", err)
@@ -156,35 +178,41 @@ topics:
 	}
 }
 
-func TestValidate_Violations(t *testing.T) {
+func TestValidate_違反のある設定の場合_該当キーパスのエラーが原因と対処つきで返ること(t *testing.T) {
+	// Arrange
 	tests := []struct {
 		name    string
 		mutate  func(c *Config)
 		keyPath string
 	}{
-		{"duplicate topic name", func(c *Config) { c.Topics[1].Name = "orders" }, "topics[1].name"},
-		{"topic name with path separator", func(c *Config) { c.Topics[0].Name = "a/b" }, "topics[0].name"},
-		{"topic name dot-dot", func(c *Config) { c.Topics[0].Name = ".." }, "topics[0].name"},
-		{"topic name single dot", func(c *Config) { c.Topics[0].Name = "." }, "topics[0].name"},
-		{"topic name with backslash", func(c *Config) { c.Topics[0].Name = `a\b` }, "topics[0].name"},
-		{"subscription name with path separator", func(c *Config) { c.Topics[0].Subscriptions[0].Name = "../escape" }, "topics[0].subscriptions[0].name"},
-		{"subscription name dot-dot", func(c *Config) { c.Topics[0].Subscriptions[0].Name = ".." }, "topics[0].subscriptions[0].name"},
-		{"duplicate subscription name", func(c *Config) { c.Topics[0].Subscriptions[1].Name = "current" }, "topics[0].subscriptions[1].name"},
-		{"missing subscription directory", func(c *Config) { c.Topics[0].Subscriptions[0].Directory = "" }, "topics[0].subscriptions[0].directory"},
-		{"missing source directory", func(c *Config) { c.Topics[0].Source.Directory = "" }, "topics[0].source.directory"},
-		{"missing host for remote", func(c *Config) { c.Topics[0].Source.Host = "" }, "topics[0].source.host"},
-		{"missing username for remote", func(c *Config) { c.Topics[0].Source.Auth.Username = "" }, "topics[0].source.auth.username"},
-		{"missing password and key_file for remote", func(c *Config) { c.Topics[0].Source.Auth.Password = "" }, "topics[0].source.auth"},
-		{"invalid handling", func(c *Config) { c.Topics[0].Source.OriginalFileHandling = "move" }, "topics[0].source.original_file_handling"},
-		{"invalid stability interval", func(c *Config) { c.Topics[0].Source.StabilityCheck.Interval = 0 }, "topics[0].source.stability_check.interval"},
-		{"invalid exclude pattern", func(c *Config) { c.Topics[0].Source.ExcludePatterns = []string{"[bad"} }, "topics[0].source.exclude_patterns[0]"},
-		{"port out of range", func(c *Config) { c.Topics[0].Source.Port = 70000 }, "topics[0].source.port"},
+		{"topic名が重複する場合_エラーになること", func(c *Config) { c.Topics[1].Name = "orders" }, "topics[1].name"},
+		{"topic名にパス区切りを含む場合_エラーになること", func(c *Config) { c.Topics[0].Name = "a/b" }, "topics[0].name"},
+		{"topic名がドット2つの場合_エラーになること", func(c *Config) { c.Topics[0].Name = ".." }, "topics[0].name"},
+		{"topic名がドット1つの場合_エラーになること", func(c *Config) { c.Topics[0].Name = "." }, "topics[0].name"},
+		{"topic名にバックスラッシュを含む場合_エラーになること", func(c *Config) { c.Topics[0].Name = `a\b` }, "topics[0].name"},
+		{"subscription名にパス区切りを含む場合_エラーになること", func(c *Config) { c.Topics[0].Subscriptions[0].Name = "../escape" }, "topics[0].subscriptions[0].name"},
+		{"subscription名がドット2つの場合_エラーになること", func(c *Config) { c.Topics[0].Subscriptions[0].Name = ".." }, "topics[0].subscriptions[0].name"},
+		{"subscription名が重複する場合_エラーになること", func(c *Config) { c.Topics[0].Subscriptions[1].Name = "current" }, "topics[0].subscriptions[1].name"},
+		{"subscriptionのdirectoryが無い場合_エラーになること", func(c *Config) { c.Topics[0].Subscriptions[0].Directory = "" }, "topics[0].subscriptions[0].directory"},
+		{"sourceのdirectoryが無い場合_エラーになること", func(c *Config) { c.Topics[0].Source.Directory = "" }, "topics[0].source.directory"},
+		{"リモートでhostが無い場合_エラーになること", func(c *Config) { c.Topics[0].Source.Host = "" }, "topics[0].source.host"},
+		{"リモートでusernameが無い場合_エラーになること", func(c *Config) { c.Topics[0].Source.Auth.Username = "" }, "topics[0].source.auth.username"},
+		{"リモートでpasswordとkey_fileの両方が無い場合_エラーになること", func(c *Config) { c.Topics[0].Source.Auth.Password = "" }, "topics[0].source.auth"},
+		{"元ファイルの扱いが不正な場合_エラーになること", func(c *Config) { c.Topics[0].Source.OriginalFileHandling = "move" }, "topics[0].source.original_file_handling"},
+		{"安定判定intervalが不正な場合_エラーになること", func(c *Config) { c.Topics[0].Source.StabilityCheck.Interval = 0 }, "topics[0].source.stability_check.interval"},
+		{"除外パターンが不正な場合_エラーになること", func(c *Config) { c.Topics[0].Source.ExcludePatterns = []string{"[bad"} }, "topics[0].source.exclude_patterns[0]"},
+		{"ポートが範囲外の場合_エラーになること", func(c *Config) { c.Topics[0].Source.Port = 70000 }, "topics[0].source.port"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
 			cfg := baseConfig()
 			tt.mutate(cfg)
+
+			// Act
 			verrs := Validate(cfg)
+
+			// Assert
 			found := false
 			for _, v := range verrs {
 				if v.KeyPath == tt.keyPath {
@@ -201,24 +229,42 @@ func TestValidate_Violations(t *testing.T) {
 	}
 }
 
-func TestValidate_OK(t *testing.T) {
-	if verrs := Validate(baseConfig()); len(verrs) != 0 {
+func TestValidate_正しい設定の場合_違反が無いこと(t *testing.T) {
+	// Arrange
+	cfg := baseConfig()
+
+	// Act
+	verrs := Validate(cfg)
+
+	// Assert
+	if len(verrs) != 0 {
 		t.Errorf("valid config must pass, got %v", verrs)
 	}
 }
 
-func TestValidate_SafeNameCharactersAccepted(t *testing.T) {
+func TestValidate_安全な名前文字だけを使った場合_違反が無いこと(t *testing.T) {
+	// Arrange
 	cfg := baseConfig()
 	cfg.Topics[0].Name = "orders.v2_x-1"
 	cfg.Topics[0].Subscriptions[0].Name = "current-01.test_a"
-	if verrs := Validate(cfg); len(verrs) != 0 {
+
+	// Act
+	verrs := Validate(cfg)
+
+	// Assert
+	if len(verrs) != 0 {
 		t.Errorf("letters, digits, dot, underscore and hyphen must be accepted, got %v", verrs)
 	}
 }
 
-func TestExpandEnv_KeepsLiteralText(t *testing.T) {
+func TestExpandEnv_参照とリテラルが混在する場合_参照だけ展開されリテラルは保持されること(t *testing.T) {
+	// Arrange
 	t.Setenv("TEST_EXPAND_X", "value")
+
+	// Act
 	out, errs := ExpandEnv([]byte("a: ${TEST_EXPAND_X}\nb: plain\n"))
+
+	// Assert
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -227,6 +273,7 @@ func TestExpandEnv_KeepsLiteralText(t *testing.T) {
 	}
 }
 
+// baseConfig はバリデーションを通過する基準 Config を生成するヘルパー。
 func baseConfig() *Config {
 	return &Config{
 		PollingInterval:  60,

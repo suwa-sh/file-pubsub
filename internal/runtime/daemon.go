@@ -1,6 +1,6 @@
-// Package runtime hosts the resident daemon: lock acquisition (with stale
-// recovery), the embedded HTTP observability server (/healthz, /metrics),
-// the polling scheduler and graceful shutdown (SR-006, SR-007, LR-001).
+// Package runtime は常駐デーモンを担う: ロック取得 (stale 復旧つき)、
+// 組み込み HTTP 観測サーバー (/healthz, /metrics)、ポーリングスケジューラ、
+// グレースフルシャットダウン (SR-006, SR-007, LR-001)。
 package runtime
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/usecase"
 )
 
-// Daemon is the serve subcommand body.
+// Daemon は serve サブコマンドの本体。
 type Daemon struct {
 	Cfg      *config.Config
 	Pipeline *usecase.Pipeline
@@ -30,8 +30,8 @@ type Daemon struct {
 	Stdout   io.Writer
 }
 
-// New builds a daemon over the pipeline. stdout receives only the startup
-// message; everything after goes to the structured log (ui-design.md serve).
+// New はパイプラインの上にデーモンを構築する。stdout が受け取るのは起動
+// メッセージのみで、以降はすべて構造化ログに出力される (ui-design.md serve)。
 func New(cfg *config.Config, pipe *usecase.Pipeline, log *logging.Logger, metrics *metricsreg.Registry, stdout io.Writer) *Daemon {
 	return &Daemon{
 		Cfg:      cfg,
@@ -43,11 +43,11 @@ func New(cfg *config.Config, pipe *usecase.Pipeline, log *logging.Logger, metric
 	}
 }
 
-// Run acquires the lock, starts the HTTP server, then polls until ctx is
-// cancelled (the stop signal). A running cycle is never interrupted: the
-// cancellation is observed between cycles, then the HTTP server stops and the
-// lock is released (graceful shutdown, exit code 0 at the caller).
-// store.ErrAlreadyLocked means a duplicate start (exit code 3 at the caller).
+// Run はロックを取得し、HTTP サーバーを起動した後、ctx がキャンセルされる
+// (停止シグナル) までポーリングを続ける。実行中のサイクルは中断しない:
+// キャンセルはサイクルの合間に観測され、その後 HTTP サーバーを停止し
+// ロックを解放する (グレースフルシャットダウン。呼び出し側で終了コード 0)。
+// store.ErrAlreadyLocked は二重起動を意味する (呼び出し側で終了コード 3)。
 func (d *Daemon) Run(ctx context.Context) error {
 	if err := d.Lock.Acquire(os.Getpid(), time.Now()); err != nil {
 		return err
@@ -84,7 +84,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		os.Getpid(), len(d.Cfg.Topics), subs, d.Cfg.MetricsPort, d.Cfg.PollingInterval)
 	d.Log.Emit(logging.Event{EventType: "startup"})
 
-	// A running cycle is completed even after the stop signal (SR-007).
+	// 実行中のサイクルは停止シグナル後でも完了まで走らせる (SR-007)。
 	cycleCtx := context.WithoutCancel(ctx)
 	ticker := time.NewTicker(time.Duration(d.Cfg.PollingInterval) * time.Second)
 	defer ticker.Stop()

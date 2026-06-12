@@ -13,8 +13,8 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/gateway/store"
 )
 
-// writeConfig writes a valid config.yaml (one topic "orders" with
-// subscriptions current / next) into its own temp dir and returns its path.
+// writeConfig は有効な config.yaml (トピック "orders" 1 件 + サブスクリプション
+// current / next) を専用の一時ディレクトリに書き、そのパスを返す。
 func writeConfig(t *testing.T) (cfgPath, dataDir string) {
 	t.Helper()
 	base := t.TempDir()
@@ -47,7 +47,7 @@ topics:
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return cfgPath, base // data_dir defaults to the config.yaml directory
+	return cfgPath, base // data_dir の既定値は config.yaml のあるディレクトリ
 }
 
 func runCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
@@ -57,22 +57,32 @@ func runCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errBuf.String()
 }
 
-func TestUnknownCommandExitsUsage(t *testing.T) {
+func TestRun_不明なコマンドの場合_終了コード2になること(t *testing.T) {
+	// Arrange & Act
 	code, _, stderr := runCLI(t, "bogus")
+
+	// Assert
 	if code != exitUsage {
 		t.Fatalf("exit = %d, want %d", code, exitUsage)
 	}
 	if !strings.Contains(stderr, "unknown command") {
 		t.Fatalf("stderr = %q", stderr)
 	}
+
+	// Act & Assert: 引数なしも終了コード 2
 	if code, _, _ := runCLI(t); code != exitUsage {
 		t.Fatal("no args must exit 2")
 	}
 }
 
-func TestConfigValidateOK(t *testing.T) {
+func TestCmdConfigValidate_設定が正しい場合_OKと件数が出力されること(t *testing.T) {
+	// Arrange
 	cfgPath, _ := writeConfig(t)
+
+	// Act
 	code, stdout, _ := runCLI(t, "config", "validate", "--config", cfgPath)
+
+	// Assert
 	if code != exitOK {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -81,14 +91,18 @@ func TestConfigValidateOK(t *testing.T) {
 	}
 }
 
-func TestConfigValidateNGReportsAllErrors(t *testing.T) {
+func TestCmdConfigValidate_設定に複数の違反がある場合_全件報告され終了コード2になること(t *testing.T) {
+	// Arrange: polling_interval と topics の 2 つの違反を同時に仕込む
 	base := t.TempDir()
 	cfgPath := filepath.Join(base, "config.yaml")
-	// Two violations at once: missing polling_interval and topics.
 	if err := os.WriteFile(cfgPath, []byte("archive_retention: 90\nretry_max_count: 5\nmetrics_port: 9090\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Act
 	code, _, stderr := runCLI(t, "config", "validate", "--config", cfgPath)
+
+	// Assert
 	if code != exitUsage {
 		t.Fatalf("exit = %d, want 2", code)
 	}
@@ -97,7 +111,8 @@ func TestConfigValidateNGReportsAllErrors(t *testing.T) {
 	}
 }
 
-func TestConfigValidateMissingFlag(t *testing.T) {
+func TestCmdConfigValidate_configフラグが無い場合_終了コード2になること(t *testing.T) {
+	// Arrange & Act & Assert
 	if code, _, _ := runCLI(t, "config", "validate"); code != exitUsage {
 		t.Fatal("missing --config must exit 2")
 	}
@@ -106,7 +121,7 @@ func TestConfigValidateMissingFlag(t *testing.T) {
 	}
 }
 
-// seedManifest writes one manifest with current=delivered, next=failed.
+// seedManifest は current=delivered / next=failed のマニフェストを 1 件書き込む。
 func seedManifest(t *testing.T, dataDir string) string {
 	t.Helper()
 	collected := time.Date(2026, 6, 1, 9, 15, 0, 0, time.UTC)
@@ -123,11 +138,15 @@ func seedManifest(t *testing.T, dataDir string) string {
 	return m.MessageID
 }
 
-func TestStatusTableAndSummary(t *testing.T) {
+func TestCmdStatus_マニフェストがある場合_テーブルとサマリが出力されること(t *testing.T) {
+	// Arrange
 	cfgPath, dataDir := writeConfig(t)
 	id := seedManifest(t, dataDir)
 
+	// Act
 	code, stdout, _ := runCLI(t, "status", "--config", cfgPath)
+
+	// Assert
 	if code != exitOK {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -140,7 +159,7 @@ func TestStatusTableAndSummary(t *testing.T) {
 	if !strings.Contains(stdout, id) {
 		t.Fatalf("stdout must contain the message_id, got %q", stdout)
 	}
-	// grep-style: one line carries message_id + failed + retry count.
+	// grep しやすい形式: message_id + failed + リトライ回数が 1 行に載る。
 	var failedLine string
 	for _, l := range lines {
 		if strings.Contains(l, id) && strings.Contains(l, "failed") {
@@ -157,11 +176,15 @@ func TestStatusTableAndSummary(t *testing.T) {
 	}
 }
 
-func TestStatusFilterByStatus(t *testing.T) {
+func TestCmdStatus_statusフィルタを指定した場合_該当行のみ出力されること(t *testing.T) {
+	// Arrange
 	cfgPath, dataDir := writeConfig(t)
 	seedManifest(t, dataDir)
 
+	// Act
 	code, stdout, _ := runCLI(t, "status", "--config", cfgPath, "--topic", "orders", "--status", "failed")
+
+	// Assert
 	if code != exitOK {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -170,7 +193,8 @@ func TestStatusFilterByStatus(t *testing.T) {
 	}
 }
 
-func TestStatusArgumentValidation(t *testing.T) {
+func TestCmdStatus_引数が不正な場合_終了コード2になること(t *testing.T) {
+	// Arrange
 	cfgPath, _ := writeConfig(t)
 	cases := [][]string{
 		{"status", "--config", cfgPath, "--status", "pending"},
@@ -179,13 +203,15 @@ func TestStatusArgumentValidation(t *testing.T) {
 		{"status"},
 	}
 	for _, args := range cases {
+		// Act & Assert
 		if code, _, stderr := runCLI(t, args...); code != exitUsage {
 			t.Fatalf("%v: exit = %d (stderr %q), want 2", args, code, stderr)
 		}
 	}
 }
 
-func TestStatusDLQView(t *testing.T) {
+func TestCmdStatus_dlqを指定した場合_DLQテーブルとサマリが出力されること(t *testing.T) {
+	// Arrange: DLQ 隔離済みメッセージを 1 件作る
 	cfgPath, dataDir := writeConfig(t)
 	archive := filepath.Join(dataDir, "archive", "orders", "m1")
 	if err := store.WriteFileAtomic(archive, strings.NewReader("x"), 0o644); err != nil {
@@ -202,7 +228,10 @@ func TestStatusDLQView(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Act
 	code, stdout, _ := runCLI(t, "status", "--config", cfgPath, "--status", "dlq")
+
+	// Assert
 	if code != exitOK {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -220,24 +249,27 @@ func TestStatusDLQView(t *testing.T) {
 	}
 }
 
-func TestReplayArgumentValidation(t *testing.T) {
+func TestCmdReplay_引数が不正な場合_終了コード2になること(t *testing.T) {
+	// Arrange
 	cfgPath, _ := writeConfig(t)
 	cases := [][]string{
-		{"replay", "--config", cfgPath, "--topic", "orders", "--subscription", "next"},                                                                    // neither
-		{"replay", "--config", cfgPath, "--topic", "orders", "--message-id", "x", "--from", "2026-05-01", "--to", "2026-05-31", "--subscription", "next"}, // both
-		{"replay", "--config", cfgPath, "--topic", "orders", "--message-id", "x"},                                                                         // no subscription
-		{"replay", "--config", cfgPath, "--topic", "orders", "--message-id", "x", "--subscription", "nope"},                                               // unknown subscription
-		{"replay", "--config", cfgPath, "--topic", "nope", "--message-id", "x", "--subscription", "next"},                                                 // unknown topic
-		{"replay", "--config", cfgPath, "--topic", "orders", "--from", "05/01", "--to", "2026-05-31", "--subscription", "next"},                           // bad date
+		{"replay", "--config", cfgPath, "--topic", "orders", "--subscription", "next"},                                                                    // message-id も期間も無い
+		{"replay", "--config", cfgPath, "--topic", "orders", "--message-id", "x", "--from", "2026-05-01", "--to", "2026-05-31", "--subscription", "next"}, // 両方指定
+		{"replay", "--config", cfgPath, "--topic", "orders", "--message-id", "x"},                                                                         // subscription 無し
+		{"replay", "--config", cfgPath, "--topic", "orders", "--message-id", "x", "--subscription", "nope"},                                               // 未定義 subscription
+		{"replay", "--config", cfgPath, "--topic", "nope", "--message-id", "x", "--subscription", "next"},                                                 // 未定義 topic
+		{"replay", "--config", cfgPath, "--topic", "orders", "--from", "05/01", "--to", "2026-05-31", "--subscription", "next"},                           // 不正な日付
 	}
 	for _, args := range cases {
+		// Act & Assert
 		if code, _, _ := runCLI(t, args...); code != exitUsage {
 			t.Fatalf("%v: exit code must be 2", args)
 		}
 	}
 }
 
-func TestReplayPlacesAndSummarizes(t *testing.T) {
+func TestCmdReplay_messageIDを指定した場合_指定サブスクリプションにのみ配置されサマリが出力されること(t *testing.T) {
+	// Arrange
 	cfgPath, dataDir := writeConfig(t)
 	id := seedManifest(t, dataDir)
 	archivePath := store.NewArchiveStore(dataDir).ArchivePath("orders", id)
@@ -245,7 +277,10 @@ func TestReplayPlacesAndSummarizes(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Act
 	code, stdout, stderr := runCLI(t, "replay", "--config", cfgPath, "--topic", "orders", "--message-id", id, "--subscription", "next")
+
+	// Assert
 	if code != exitOK {
 		t.Fatalf("exit = %d (stderr %q), want 0", code, stderr)
 	}
@@ -254,8 +289,7 @@ func TestReplayPlacesAndSummarizes(t *testing.T) {
 			t.Fatalf("summary missing %q, stdout = %q", want, stdout)
 		}
 	}
-
-	// The replayed file is in next only, and status now shows the replay.
+	// リプレイされたファイルは next にのみ存在し、status にリプレイが表示される。
 	nextDir := filepath.Join(dataDir, "subs", "next")
 	if _, err := os.Stat(filepath.Join(nextDir, "orders_1.csv")); err != nil {
 		t.Fatalf("replayed file missing: %v", err)
@@ -270,20 +304,23 @@ func TestReplayPlacesAndSummarizes(t *testing.T) {
 	}
 }
 
-// TestReplayRequiresDataDirLock guards the single-writer rule: replay must
-// refuse to run (exit 3) while serve holds the data-dir lock, and succeed
-// once the lock is free.
-func TestReplayRequiresDataDirLock(t *testing.T) {
+// TestCmdReplay_serveがロックを保持している場合_終了コード3で拒否されること は
+// single-writer のルールを守るテスト: serve が data-dir ロックを保持している間、
+// replay は実行を拒否し (終了コード 3)、ロックが解放されたら成功しなければならない。
+func TestCmdReplay_serveがロックを保持している場合_終了コード3で拒否されること(t *testing.T) {
+	// Arrange: 生きたロック保持者 (このテストプロセス) で serve 実行中を再現する
 	cfgPath, dataDir := writeConfig(t)
 	args := []string{"replay", "--config", cfgPath, "--topic", "orders",
 		"--from", "2026-04-01", "--to", "2026-04-30", "--subscription", "next"}
-
-	// A live holder (this test process) simulates a running serve.
 	lock := store.NewLockManager(dataDir)
 	if err := lock.Acquire(os.Getpid(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
+
+	// Act
 	code, _, stderr := runCLI(t, args...)
+
+	// Assert
 	if code != exitDuplicate {
 		t.Fatalf("exit = %d (stderr %q), want %d while the lock is held", code, stderr, exitDuplicate)
 	}
@@ -291,12 +328,14 @@ func TestReplayRequiresDataDirLock(t *testing.T) {
 		t.Fatalf("stderr must explain that serve is running, got %q", stderr)
 	}
 
-	// Once the lock is released, the same replay succeeds and the lock it
-	// took for itself is released again afterwards.
+	// Act: ロック解放後に同じ replay を実行
 	if err := lock.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, stderr := runCLI(t, args...); code != exitOK {
+	code, _, stderr = runCLI(t, args...)
+
+	// Assert: 成功し、replay 自身が取得したロックも完了時に解放される
+	if code != exitOK {
 		t.Fatalf("exit = %d (stderr %q), want 0 without a lock holder", code, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "lock")); !os.IsNotExist(err) {
@@ -304,10 +343,15 @@ func TestReplayRequiresDataDirLock(t *testing.T) {
 	}
 }
 
-func TestReplayZeroTargetsIsSuccess(t *testing.T) {
+func TestCmdReplay_対象が0件の場合_正常終了すること(t *testing.T) {
+	// Arrange
 	cfgPath, _ := writeConfig(t)
+
+	// Act
 	code, stdout, _ := runCLI(t, "replay", "--config", cfgPath, "--topic", "orders",
 		"--from", "2026-04-01", "--to", "2026-04-30", "--subscription", "next")
+
+	// Assert
 	if code != exitOK {
 		t.Fatalf("exit = %d, want 0 (zero targets is a normal result)", code)
 	}

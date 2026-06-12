@@ -8,6 +8,7 @@ import (
 	"time"
 )
 
+// scrape は /metrics をリクエストしてレスポンス本文を返すヘルパー。
 func scrape(t *testing.T, r *Registry) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/metrics", nil)
@@ -23,7 +24,8 @@ func scrape(t *testing.T, r *Registry) string {
 	return string(body)
 }
 
-func TestRegistry_FiveSeriesWithTopicLabel(t *testing.T) {
+func TestRegistry_各メトリクスを記録した場合_topicラベルつきの5系列が出力されること(t *testing.T) {
+	// Arrange
 	r := New()
 	at := time.Date(2026, 6, 12, 9, 30, 1, 0, time.UTC)
 	r.SetLastCollected("orders", at)
@@ -33,7 +35,10 @@ func TestRegistry_FiveSeriesWithTopicLabel(t *testing.T) {
 	r.SetDLQCount("invoices", 1)
 	r.SetBacklogCount("orders", 3)
 
+	// Act
 	body := scrape(t, r)
+
+	// Assert
 	wants := []string{
 		`file_pubsub_last_collect_timestamp_seconds{topic="orders"} 1.781256601e+09`,
 		`file_pubsub_processed_total{topic="orders"} 2`,
@@ -48,10 +53,15 @@ func TestRegistry_FiveSeriesWithTopicLabel(t *testing.T) {
 	}
 }
 
-func TestRegistry_DLQCountIsGauge(t *testing.T) {
+func TestSetDLQCount_小さい値を再設定した場合_gaugeとして最新値が反映されること(t *testing.T) {
+	// Arrange
 	r := New()
 	r.SetDLQCount("invoices", 2)
-	r.SetDLQCount("invoices", 1) // gauge: settable downwards (operator drained DLQ)
+
+	// Act
+	r.SetDLQCount("invoices", 1) // gauge: 減少方向にも設定できる (オペレータが DLQ を捌いた場合)
+
+	// Assert
 	if !strings.Contains(scrape(t, r), `file_pubsub_dlq_count{topic="invoices"} 1`) {
 		t.Error("dlq_count must reflect the latest set value")
 	}

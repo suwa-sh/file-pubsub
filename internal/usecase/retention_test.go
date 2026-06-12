@@ -9,25 +9,26 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-func TestRetentionDeletesOnlyExpiredArchives(t *testing.T) {
-	e := newEnv(t, config.HandlingDelete) // ArchiveRetention = 90 days
+func TestRetention_期限切れと期限内のアーカイブが混在する場合_期限切れのみ削除されること(t *testing.T) {
+	// Arrange (ArchiveRetention = 90 日)
+	e := newEnv(t, config.HandlingDelete)
 	old := e.seedArchived("old.csv", "old")
 	e.clock.Advance(48 * time.Hour)
 	young := e.seedArchived("young.csv", "young")
-	e.p.Fanout(context.Background()) // settle both as delivered
+	e.p.Fanout(context.Background()) // 両方を delivered として決着させる
 
-	// 91 days after the first save: only the first archive is expired.
+	// Act: 最初の保存から 91 日後 (期限切れは最初のアーカイブのみ)
 	e.clock.Set(old.SavedAt.AddDate(0, 0, 91))
 	e.p.Retention(context.Background())
 
+	// Assert
 	if ok, _ := e.p.Archive.Exists("orders", old.MessageID); ok {
 		t.Fatal("expired archive must be deleted")
 	}
 	if ok, _ := e.p.Archive.Exists("orders", young.MessageID); !ok {
 		t.Fatal("archive within the deadline must be kept")
 	}
-
-	// The manifest history survives the archive deletion (CTR-003).
+	// マニフェストの履歴はアーカイブ削除後も残る (CTR-003)。
 	m, err := e.p.Manifests.Get(old.MessageID)
 	if err != nil {
 		t.Fatal(err)
@@ -36,19 +37,20 @@ func TestRetentionDeletesOnlyExpiredArchives(t *testing.T) {
 		t.Fatal("manifest must remain readable")
 	}
 
-	// Idempotent re-run: nothing to do, no error.
+	// Act & Assert: 冪等な再実行 (何もすることがなく、エラーも出ない)
 	e.p.Retention(context.Background())
 }
 
-// TestRetentionKeepsUnresolvedExpiredArchive guards the terminal-status gate:
-// an expired archive whose message is still failed (or delivering / retrying)
-// must be kept, because it is the only payload a later retry, DLQ isolation
-// or replay can use.
-func TestRetentionKeepsUnresolvedExpiredArchive(t *testing.T) {
+// TestRetention_未決着のメッセージが期限切れの場合_アーカイブが保持されること は
+// 終端ステータスゲートを守るテスト: failed (あるいは delivering / retrying) の
+// まま期限切れになったアーカイブは保持しなければならない。後続の retry・
+// DLQ 隔離・replay が使える唯一のペイロードだからである。
+func TestRetention_未決着のメッセージが期限切れの場合_アーカイブが保持されること(t *testing.T) {
+	// Arrange: next の失敗でメッセージを failed として決着させる
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
-	e.p.Fanout(context.Background()) // next fails → message settles as failed
+	e.p.Fanout(context.Background())
 
 	got, err := e.p.Manifests.Get(m.MessageID)
 	if err != nil {
@@ -58,18 +60,22 @@ func TestRetentionKeepsUnresolvedExpiredArchive(t *testing.T) {
 		t.Fatalf("precondition: status = %s, want failed", got.Status)
 	}
 
+	// Act
 	e.clock.Set(m.SavedAt.AddDate(0, 0, 91))
 	e.p.Retention(context.Background())
 
+	// Assert
 	if ok, _ := e.p.Archive.Exists("orders", m.MessageID); !ok {
 		t.Fatal("an unresolved (failed) message must keep its archive past the deadline")
 	}
 }
 
-// TestRetentionDeletesExpiredDLQArchive: dlq is terminal because Isolate
-// copies the payload into dlq/ first, so the archive body may be deleted.
-func TestRetentionDeletesExpiredDLQArchive(t *testing.T) {
-	e := newEnv(t, config.HandlingDelete) // RetryMaxCount = 2
+// TestRetention_dlqメッセージが期限切れの場合_アーカイブが削除されDLQコピーは残ること:
+// dlq が終端なのは Isolate が先にペイロードを dlq/ へコピーしているためで、
+// アーカイブ本体は削除してよい。
+func TestRetention_dlqメッセージが期限切れの場合_アーカイブが削除されDLQコピーは残ること(t *testing.T) {
+	// Arrange: retry 上限超過で DLQ 隔離まで追い込む (RetryMaxCount = 2)
+	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
 	e.p.Fanout(context.Background())
@@ -87,9 +93,11 @@ func TestRetentionDeletesExpiredDLQArchive(t *testing.T) {
 		t.Fatal("precondition: the dlq copy of the payload must exist")
 	}
 
+	// Act
 	e.clock.Set(m.SavedAt.AddDate(0, 0, 91))
 	e.p.Retention(context.Background())
 
+	// Assert
 	if ok, _ := e.p.Archive.Exists("orders", m.MessageID); ok {
 		t.Fatal("an expired dlq message must have its archive deleted")
 	}

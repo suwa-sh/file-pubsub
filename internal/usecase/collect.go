@@ -14,10 +14,10 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
 
-// Collect runs one collection pass over every topic: resume interrupted
-// archive promotions, then list → stability/exclusion checks → fetch →
-// message_id assignment → work→archive promotion → manifest (collected →
-// archived) → original file handling. A failing topic never stops the others.
+// Collect は全トピックに対して収集パスを 1 回実行する: 中断されたアーカイブ
+// 昇格の再開後、一覧取得 → 安定判定・除外判定 → 取得 → message_id 採番 →
+// work→archive 昇格 → マニフェスト (collected → archived) → 原本ファイル処理
+// の順に進む。あるトピックの失敗が他のトピックを止めることはない。
 func (p *Pipeline) Collect(ctx context.Context) {
 	p.resumeArchiving()
 	for i := range p.Cfg.Topics {
@@ -32,9 +32,9 @@ func (p *Pipeline) Collect(ctx context.Context) {
 	}
 }
 
-// resumeArchiving promotes messages left in the collected state by an
-// interruption: work file present → promote again (idempotent overwrite);
-// archive already present → only the manifest update was lost, redo it.
+// resumeArchiving は中断によって collected 状態のまま残ったメッセージを昇格させる:
+// work ファイルが残っていれば再昇格 (冪等な上書き)、archive が既に存在すれば
+// マニフェスト更新だけが失われたとみなしてやり直す。
 func (p *Pipeline) resumeArchiving() {
 	manifests, err := p.Manifests.List()
 	if err != nil {
@@ -103,17 +103,16 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 				continue
 			}
 		}
-		// Delete handling: every file present in the source is collected as a
-		// new message, even when its name and mtime match an earlier message
-		// (e.g. a leftover original whose delete failed, or a producer
-		// re-output with cp -p). At-least-once: a duplicate collection is
-		// bounded to one extra message because the original is deleted right
-		// after the archive save succeeds.
+		// delete ハンドリング: ソースに存在するファイルは、名前と mtime が過去の
+		// メッセージと一致しても (例: 削除に失敗した原本の残留、cp -p による
+		// プロデューサーの再出力)、すべて新しいメッセージとして収集する。
+		// at-least-once: アーカイブ保存成功の直後に原本を削除するため、
+		// 重複収集は高々 1 メッセージに抑えられる。
 
 		curr := domain.Observation{Name: f.Name, Size: f.Size, ModTime: f.ModTime, ObservedAt: p.now()}
 		prev, seen := obs[f.Name]
 		if !seen || prev.Size != curr.Size || !prev.ModTime.Equal(curr.ModTime) {
-			obs[f.Name] = curr // first sighting or still being written: carry over
+			obs[f.Name] = curr // 初回観測または書き込み途中: 次サイクルへ持ち越す
 			continue
 		}
 		if !domain.IsStable(prev, curr, interval) {
@@ -162,7 +161,7 @@ func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source
 	p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "collected"})
 
 	if err := p.Archive.Promote(t.Name, msg.MessageID); err != nil {
-		// The message stays collected; resumeArchiving retries next cycle.
+		// メッセージは collected のまま残り、次サイクルの resumeArchiving が再試行する。
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "archive_failed", ErrorDetail: fmt.Sprintf("%v. check the archive directory permissions and disk space; retried on the next polling cycle", err)})
 		return nil
 	}
@@ -171,7 +170,7 @@ func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source
 		return nil
 	}
 
-	// Original handling only after the archive save succeeded (LR-303).
+	// 原本の処理はアーカイブ保存が成功した後にのみ行う (LR-303)。
 	switch t.Source.OriginalFileHandling {
 	case config.HandlingCopy:
 		if err := p.Processed.MarkProcessed(t.Name, name, f.ModTime, f.Size, p.now()); err != nil {
@@ -188,9 +187,9 @@ func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source
 	return nil
 }
 
-// finalizeArchive moves the manifest to archived with the archive path, the
-// save time and the retention deadline, then removes nothing: the archive is
-// the source of truth from here on (SP-001).
+// finalizeArchive はマニフェストを archived に遷移させ、アーカイブパス・保存時刻・
+// 保持期限を記録する。以降は何も削除しない: ここから先はアーカイブが
+// 正本となる (SP-001)。
 func (p *Pipeline) finalizeArchive(m *store.Manifest) error {
 	if err := domain.ValidateTransition(m.Status, domain.StatusArchived); err != nil {
 		return err

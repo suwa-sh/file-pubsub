@@ -8,10 +8,10 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
 
-// Fanout delivers every archived / delivering message (file name ascending,
-// SR-005) to its pending subscriptions with AtomicWrite. Delivered
-// subscriptions are skipped via the manifest (idempotent re-entry, SR-003);
-// failures are recorded as failed and left to the retry stage.
+// Fanout は archived / delivering の全メッセージを (ファイル名昇順、SR-005)
+// 未配信のサブスクリプションへ AtomicWrite で配信する。配信済みの
+// サブスクリプションはマニフェストに基づきスキップされ (冪等な再入、SR-003)、
+// 失敗は failed として記録して retry ステージに委ねる。
 func (p *Pipeline) Fanout(ctx context.Context) {
 	manifests, err := p.Manifests.List()
 	if err != nil {

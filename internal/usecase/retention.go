@@ -8,14 +8,13 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
 
-// Retention deletes archive files past their retention deadline (SP-006).
-// Only messages whose delivery is settled (delivered / dlq) are eligible:
-// deleting the archive of a failed / delivering / retrying message would
-// destroy the only payload a later retry or DLQ isolation needs. The dlq
-// status is safe because DLQStore.Isolate copies (not moves) the payload into
-// dlq/{topic}/{message_id} before the message settles as dlq. Only the
-// archive file body is removed; the manifest delivery history is kept for
-// audit and the status command (CTR-003).
+// Retention は保持期限を過ぎたアーカイブファイルを削除する (SP-006)。
+// 対象は配信が決着した (delivered / dlq) メッセージのみ: failed / delivering /
+// retrying のアーカイブを削除すると、後続の retry や DLQ 隔離が必要とする
+// 唯一のペイロードが失われる。dlq が安全なのは、メッセージが dlq として
+// 決着する前に DLQStore.Isolate がペイロードを dlq/{topic}/{message_id} へ
+// コピー (移動ではない) しているため。削除するのはアーカイブファイル本体のみで、
+// マニフェストの配信履歴は監査と status コマンドのために保持する (CTR-003)。
 func (p *Pipeline) Retention(ctx context.Context) {
 	manifests, err := p.Manifests.List()
 	if err != nil {
@@ -40,7 +39,7 @@ func (p *Pipeline) Retention(ctx context.Context) {
 			continue
 		}
 		if !exists {
-			continue // already deleted (idempotent re-run)
+			continue // 削除済み (冪等な再実行)
 		}
 		if err := p.Archive.Delete(m.Topic, m.MessageID); err != nil {
 			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retention_delete_failed", ErrorDetail: fmt.Sprintf("%v. check the archive directory permissions; retried on the next polling cycle", err)})

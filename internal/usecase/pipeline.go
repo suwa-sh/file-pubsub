@@ -1,7 +1,7 @@
-// Package usecase implements the polling-cycle stages (collect → fanout →
-// retry → retention) and the shared operations (replay / status query) on top
-// of the domain rules and the file stores. The CLI and the daemon both go
-// through this layer (CLP-101 / CLR-101).
+// Package usecase は、domain のルールとファイルストアの上に、ポーリング
+// サイクルの各ステージ (collect → fanout → retry → retention) と共通の運用
+// 操作 (replay / status 照会) を実装する。CLI とデーモンはともにこの層を
+// 経由する (CLP-101 / CLR-101)。
 package usecase
 
 import (
@@ -17,9 +17,9 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
 
-// Pipeline wires the stores, the logger and the metrics registry together.
-// Log and Metrics may be nil (e.g. read-only CLI usage); Now and NewConnector
-// default to time.Now and source.New.
+// Pipeline は各ストア・ロガー・メトリクスレジストリを束ねる。
+// Log と Metrics は nil でもよい (例: 読み取り専用の CLI 利用)。Now と
+// NewConnector の既定値はそれぞれ time.Now と source.New。
 type Pipeline struct {
 	Cfg          *config.Config
 	Manifests    *store.ManifestStore
@@ -31,12 +31,12 @@ type Pipeline struct {
 	Now          func() time.Time
 	NewConnector func(source.Options) (source.Connector, error)
 
-	// observations carries the per-topic stability observations between
-	// polling cycles (in-memory: a restart just needs one extra cycle).
+	// observations はトピック別の安定判定観測値をポーリングサイクル間で
+	// 持ち越す (メモリ上のみ: 再起動時はサイクルが 1 回余計に必要になるだけ)。
 	observations map[string]map[string]domain.Observation
 }
 
-// NewPipeline builds a pipeline whose stores are rooted at cfg.DataDir.
+// NewPipeline は cfg.DataDir をルートとするストア群を持つパイプラインを生成する。
 func NewPipeline(cfg *config.Config, log *logging.Logger, metrics *metricsreg.Registry) *Pipeline {
 	return &Pipeline{
 		Cfg:       cfg,
@@ -95,7 +95,7 @@ func subscriptionNames(t *config.Topic) []string {
 	return names
 }
 
-// archiveRelPath is the manifest archive_path value (object-storage-schema).
+// archiveRelPath はマニフェストの archive_path 値を返す (object-storage-schema)。
 func archiveRelPath(topic, messageID string) string {
 	return path.Join("archive", topic, messageID)
 }
@@ -110,9 +110,9 @@ func (p *Pipeline) topicObservations(topic string) map[string]domain.Observation
 	return p.observations[topic]
 }
 
-// settle derives the message status from the per-subscription states after a
-// delivery pass. All configured subscriptions delivered → delivered; any
-// failed → failed; otherwise dlq when an isolated subscription remains.
+// settle は配信パス後のサブスクリプション別状態からメッセージのステータスを
+// 導出する。設定された全サブスクリプションが delivered → delivered、
+// failed が 1 つでもあれば → failed、それ以外で隔離済みが残っていれば dlq。
 func (p *Pipeline) settle(m *store.Manifest, t *config.Topic) {
 	states := m.SubscriptionStates()
 	allDelivered := len(t.Subscriptions) > 0
@@ -145,9 +145,9 @@ func (p *Pipeline) settle(m *store.Manifest, t *config.Topic) {
 	}
 }
 
-// deliverPending places the archive file into every pending subscription of m
-// with AtomicWrite, records delivered / failed per subscription in the
-// manifest (in memory; the caller persists) and returns the failure count.
+// deliverPending は m の未配信サブスクリプションすべてにアーカイブファイルを
+// AtomicWrite で配置し、サブスクリプション別の delivered / failed をマニフェスト
+// (メモリ上。永続化は呼び出し側) に記録して失敗数を返す。
 func (p *Pipeline) deliverPending(m *store.Manifest, t *config.Topic) int {
 	failures := 0
 	for _, name := range domain.PendingSubscriptions(m.SubscriptionStates(), subscriptionNames(t)) {

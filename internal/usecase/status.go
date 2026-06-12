@@ -9,14 +9,14 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/gateway/store"
 )
 
-// StatusFilter narrows the delivery-state rows (empty fields match all).
+// StatusFilter は配信状態の行を絞り込む (空フィールドは全件に一致)。
 type StatusFilter struct {
 	Topic        string
 	Subscription string
 	Status       string // delivered / failed / dlq
 }
 
-// StatusRow is one line of the status table (ui-design.md column contract).
+// StatusRow は status テーブルの 1 行 (ui-design.md のカラム契約)。
 type StatusRow struct {
 	MessageID    string
 	Topic        string
@@ -27,8 +27,8 @@ type StatusRow struct {
 	Replay       bool
 }
 
-// StatusRows scans the manifests (the single source of truth, CTR-003) and
-// returns one row per message × subscription, message_id ascending.
+// StatusRows はマニフェスト (唯一の正本、CTR-003) を走査し、
+// メッセージ × サブスクリプションごとに 1 行を message_id 昇順で返す。
 func (p *Pipeline) StatusRows(f StatusFilter) ([]StatusRow, error) {
 	manifests, err := p.Manifests.List()
 	if err != nil {
@@ -66,7 +66,7 @@ func (p *Pipeline) StatusRows(f StatusFilter) ([]StatusRow, error) {
 	return rows, nil
 }
 
-// StatusSummary is the per topic / subscription count view (LP-401).
+// StatusSummary はトピック / サブスクリプション別の件数ビュー (LP-401)。
 type StatusSummary struct {
 	Topic        string
 	Subscription string
@@ -75,8 +75,8 @@ type StatusSummary struct {
 	DLQ          int
 }
 
-// SummarizeStatus aggregates rows per topic / subscription, sorted by
-// topic then subscription.
+// SummarizeStatus は行をトピック / サブスクリプション別に集計し、
+// トピック → サブスクリプションの順でソートして返す。
 func SummarizeStatus(rows []StatusRow) []StatusSummary {
 	type key struct{ topic, sub string }
 	counts := map[key]*StatusSummary{}
@@ -109,8 +109,8 @@ func SummarizeStatus(rows []StatusRow) []StatusSummary {
 	return out
 }
 
-// DLQList returns the isolation metadata of every DLQ message (optionally one
-// topic), ordered by topic then message_id.
+// DLQList は全 DLQ メッセージ (トピック指定も可) の隔離メタデータを、
+// トピック → message_id の順で返す。
 func (p *Pipeline) DLQList(topicFilter string) ([]store.DLQMeta, error) {
 	var metas []store.DLQMeta
 	for i := range p.Cfg.Topics {

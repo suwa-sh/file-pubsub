@@ -2,8 +2,8 @@ package domain
 
 import "fmt"
 
-// MessageStatus is the message delivery state recorded in the manifest
-// (manifest_json.status). The manifest is the single source of truth (CTR-003).
+// MessageStatus は manifest に記録されるメッセージの配信状態
+// (manifest_json.status)。manifest が唯一の正本である (CTR-003)。
 type MessageStatus string
 
 const (
@@ -16,7 +16,7 @@ const (
 	StatusDLQ        MessageStatus = "dlq"
 )
 
-// Valid reports whether s is a defined message status.
+// Valid は s が定義済みのメッセージ状態かどうかを返す。
 func (s MessageStatus) Valid() bool {
 	switch s {
 	case StatusCollected, StatusArchived, StatusDelivering, StatusDelivered,
@@ -26,9 +26,9 @@ func (s MessageStatus) Valid() bool {
 	return false
 }
 
-// transitions encodes the message delivery state machine (LR-201):
+// transitions はメッセージ配信の状態遷移マシンを表す (LR-201):
 // collected -> archived -> delivering -> delivered / failed,
-// failed -> retrying, retrying -> delivering / failed / dlq.
+// failed -> retrying, retrying -> delivering / failed / dlq。
 var transitions = map[MessageStatus]map[MessageStatus]bool{
 	StatusCollected:  {StatusArchived: true},
 	StatusArchived:   {StatusDelivering: true},
@@ -39,8 +39,8 @@ var transitions = map[MessageStatus]map[MessageStatus]bool{
 	StatusDLQ:        {},
 }
 
-// ValidateTransition returns an error when from -> to is not an allowed
-// message delivery state transition.
+// ValidateTransition は from -> to がメッセージ配信状態の許可された遷移で
+// ない場合にエラーを返す。
 func ValidateTransition(from, to MessageStatus) error {
 	if !from.Valid() {
 		return fmt.Errorf("invalid message status %q", from)
@@ -54,8 +54,8 @@ func ValidateTransition(from, to MessageStatus) error {
 	return nil
 }
 
-// SubscriptionStatus is the per-subscription delivery state recorded in
-// manifest_json.subscriptions[].status.
+// SubscriptionStatus は manifest_json.subscriptions[].status に記録される
+// subscription 単位の配信状態。
 type SubscriptionStatus string
 
 const (
@@ -64,7 +64,7 @@ const (
 	SubscriptionDLQ       SubscriptionStatus = "dlq"
 )
 
-// Valid reports whether s is a defined subscription delivery status.
+// Valid は s が定義済みの subscription 配信状態かどうかを返す。
 func (s SubscriptionStatus) Valid() bool {
 	switch s {
 	case SubscriptionDelivered, SubscriptionFailed, SubscriptionDLQ:

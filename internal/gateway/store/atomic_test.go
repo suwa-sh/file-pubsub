@@ -7,11 +7,16 @@ import (
 	"testing"
 )
 
-func TestWriteFileAtomic(t *testing.T) {
+func TestWriteFileAtomic_未作成のサブディレクトリに書いた場合_最終名で書き出され一時ファイルが残らないこと(t *testing.T) {
+	// Arrange
 	dir := t.TempDir()
 	dst := filepath.Join(dir, "sub", "orders.csv")
 
-	if err := WriteFileAtomic(dst, strings.NewReader("id,qty\n1,2\n"), 0o644); err != nil {
+	// Act
+	err := WriteFileAtomic(dst, strings.NewReader("id,qty\n1,2\n"), 0o644)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
 	data, err := os.ReadFile(dst)
@@ -26,23 +31,34 @@ func TestWriteFileAtomic(t *testing.T) {
 	}
 }
 
-func TestWriteFileAtomic_OverwritesExisting(t *testing.T) {
+func TestWriteFileAtomic_既存ファイルがある場合_上書きされること(t *testing.T) {
+	// Arrange
 	dst := filepath.Join(t.TempDir(), "f.txt")
 	if err := WriteFileAtomic(dst, strings.NewReader("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Act
 	if err := WriteFileAtomic(dst, strings.NewReader("new"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Assert
 	data, _ := os.ReadFile(dst)
 	if string(data) != "new" {
 		t.Errorf("content = %q, want new", data)
 	}
 }
 
-func TestWriteJSONAtomic(t *testing.T) {
+func TestWriteJSONAtomic_値を書いた場合_JSONとして読み戻せること(t *testing.T) {
+	// Arrange
 	dst := filepath.Join(t.TempDir(), "meta.json")
-	if err := WriteJSONAtomic(dst, map[string]int{"n": 1}); err != nil {
+
+	// Act
+	err := WriteJSONAtomic(dst, map[string]int{"n": 1})
+
+	// Assert
+	if err != nil {
 		t.Fatalf("WriteJSONAtomic: %v", err)
 	}
 	var got map[string]int
@@ -54,14 +70,20 @@ func TestWriteJSONAtomic(t *testing.T) {
 	}
 }
 
-func TestCopyFileAtomic(t *testing.T) {
+func TestCopyFileAtomic_ソースファイルがある場合_内容がコピーされること(t *testing.T) {
+	// Arrange
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.bin")
 	if err := os.WriteFile(src, []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "out", "dst.bin")
-	if err := CopyFileAtomic(src, dst); err != nil {
+
+	// Act
+	err := CopyFileAtomic(src, dst)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("CopyFileAtomic: %v", err)
 	}
 	data, err := os.ReadFile(dst)
@@ -73,21 +95,30 @@ func TestCopyFileAtomic(t *testing.T) {
 	}
 }
 
-func TestCopyFileAtomic_MissingSource(t *testing.T) {
+func TestCopyFileAtomic_ソースファイルが無い場合_エラーになること(t *testing.T) {
+	// Arrange
 	dir := t.TempDir()
+
+	// Act & Assert
 	if err := CopyFileAtomic(filepath.Join(dir, "missing"), filepath.Join(dir, "dst")); err == nil {
 		t.Error("missing source must fail")
 	}
 }
 
-func TestCleanupTempFiles(t *testing.T) {
+func TestCleanupTempFiles_tmpと通常ファイルが混在する場合_tmpだけ削除されること(t *testing.T) {
+	// Arrange
 	dir := t.TempDir()
 	for _, name := range []string{"a.tmp", "b.csv", "c.csv.tmp"} {
 		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := CleanupTempFiles(dir); err != nil {
+
+	// Act
+	err := CleanupTempFiles(dir)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("CleanupTempFiles: %v", err)
 	}
 	entries, _ := os.ReadDir(dir)
@@ -100,7 +131,8 @@ func TestCleanupTempFiles(t *testing.T) {
 	}
 }
 
-func TestCleanupTempFiles_MissingDir(t *testing.T) {
+func TestCleanupTempFiles_ディレクトリが無い場合_エラーにならないこと(t *testing.T) {
+	// Arrange & Act & Assert
 	if err := CleanupTempFiles(filepath.Join(t.TempDir(), "nope")); err != nil {
 		t.Errorf("missing dir must not be an error: %v", err)
 	}

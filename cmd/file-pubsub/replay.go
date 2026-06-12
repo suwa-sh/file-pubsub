@@ -29,8 +29,8 @@ func cmdReplay(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	// Replay rewrites manifests (read-modify-write), so it takes the same
-	// data-dir lock as serve: a single writer at a time (SR-006).
+	// replay はマニフェストを書き換える (read-modify-write) ため、serve と
+	// 同じ data-dir ロックを取得する: 書き込みは常に単一プロセスのみ (SR-006)。
 	lock := store.NewLockManager(cfg.DataDir)
 	if err := lock.Acquire(os.Getpid(), time.Now()); err != nil {
 		if errors.Is(err, store.ErrAlreadyLocked) {

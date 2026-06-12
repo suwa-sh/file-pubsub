@@ -6,9 +6,9 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-// RunCycle executes one polling cycle in the fixed order collect → fanout →
-// retry → retention (LR-001), then refreshes the dlq / backlog gauges.
-// Stage errors are logged inside each stage and never abort the cycle.
+// RunCycle はポーリングサイクルを 1 回、collect → fanout → retry → retention の
+// 固定順 (LR-001) で実行し、最後に dlq / backlog ゲージを更新する。
+// 各ステージのエラーはステージ内部でログに記録され、サイクルを中断しない。
 func (p *Pipeline) RunCycle(ctx context.Context) {
 	p.Collect(ctx)
 	p.Fanout(ctx)
@@ -17,8 +17,8 @@ func (p *Pipeline) RunCycle(ctx context.Context) {
 	p.RefreshGauges()
 }
 
-// RefreshGauges recomputes the per-topic dlq_count and backlog_count gauges
-// from the manifests and the DLQ directory.
+// RefreshGauges はトピック別の dlq_count / backlog_count ゲージを
+// マニフェストと DLQ ディレクトリから再計算する。
 func (p *Pipeline) RefreshGauges() {
 	if p.Metrics == nil {
 		return

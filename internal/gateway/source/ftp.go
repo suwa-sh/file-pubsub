@@ -10,29 +10,29 @@ import (
 	"github.com/jlaffaye/ftp"
 )
 
-// ftpDefaultPort is the FTP control connection default (config port 0).
+// ftpDefaultPort は FTP 制御コネクションの既定ポート (設定 port 0 のとき)。
 const ftpDefaultPort = 21
 
-// ftpTimeout bounds the control connection dial and replies.
+// ftpTimeout は制御コネクションの接続と応答の上限時間。
 const ftpTimeout = 30 * time.Second
 
-// FTP collects files from an FTP server directory. Data connections use
-// passive mode (the only mode of the underlying client), which works through
-// NAT and outbound-only firewalls.
+// FTP は FTP サーバのディレクトリからファイルを収集する。データコネクションは
+// パッシブモード (下層クライアントの唯一のモード) を使うため、NAT や外向き専用
+// ファイアウォール越しでも動作する。
 //
-// Security constraint: plain FTP carries credentials and file contents
-// unencrypted on the wire. Use it only on trusted networks; prefer sftp where
-// the server allows it (see the README security notes).
+// セキュリティ上の制約: 平文 FTP は認証情報とファイル内容を暗号化せずに送る。
+// 信頼できるネットワークでのみ使用し、サーバが対応していれば sftp を優先する
+// こと (README のセキュリティ注記を参照)。
 type FTP struct {
 	opts Options
 	conn *ftp.ServerConn
 }
 
-// NewFTP returns an FTP connector. The connection is established lazily on
-// first use so construction itself never touches the network.
+// NewFTP は FTP コネクタを返す。接続は初回利用時に遅延確立されるため、
+// 生成自体はネットワークに触れない。
 func NewFTP(o Options) *FTP { return &FTP{opts: o} }
 
-// connect dials and logs in once, reusing the control connection afterwards.
+// connect は一度だけ接続・ログインし、以降は制御コネクションを再利用する。
 func (c *FTP) connect() (*ftp.ServerConn, error) {
 	if c.conn != nil {
 		return c.conn, nil
@@ -50,7 +50,7 @@ func (c *FTP) connect() (*ftp.ServerConn, error) {
 	return conn, nil
 }
 
-// List returns the regular files in the source directory.
+// List はソースディレクトリ内の通常ファイルを返す。
 func (c *FTP) List(ctx context.Context) ([]FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -66,9 +66,9 @@ func (c *FTP) List(ctx context.Context) ([]FileInfo, error) {
 	return ftpEntriesToFileInfo(entries), nil
 }
 
-// ftpEntriesToFileInfo keeps the regular files of a LIST reply. Note that the
-// mtime precision of a LIST reply may be minutes; the stability check still
-// works because it compares successive observations for equality.
+// ftpEntriesToFileInfo は LIST 応答のうち通常ファイルだけを残す。LIST 応答の
+// mtime 精度は分単位の場合があるが、安定判定は連続する観測同士の一致を比較する
+// ため問題なく機能する。
 func ftpEntriesToFileInfo(entries []*ftp.Entry) []FileInfo {
 	var files []FileInfo
 	for _, e := range entries {
@@ -80,9 +80,9 @@ func ftpEntriesToFileInfo(entries []*ftp.Entry) []FileInfo {
 	return files
 }
 
-// Fetch downloads name with RETR into destDir under a temp name, confirms the
-// transfer-complete reply, verifies the size against SIZE (skipped when the
-// server does not support it) and renames to the final name (LR-303).
+// Fetch は RETR で name を一時名のまま destDir にダウンロードし、転送完了応答を
+// 確認し、SIZE と突き合わせてサイズを検証して (サーバ非対応時はスキップ)、
+// 最終名にリネームする (LR-303)。
 func (c *FTP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -111,12 +111,12 @@ func (c *FTP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	return local, nil
 }
 
-// downloadAndClose runs the shared download protocol over the FTP data
-// connection resp and guarantees resp is closed on every path: the success
-// path closes it as the writeTempAndRename finish step (confirming the
-// transfer-complete reply, whose error fails the fetch), and the deferred
-// close covers every error path so a failed download never leaks the data
-// connection. The close runs at most once.
+// downloadAndClose は FTP データコネクション resp 上で共通ダウンロードプロトコル
+// を実行し、あらゆる経路で resp が確実に閉じられることを保証する: 成功経路では
+// writeTempAndRename の finish ステップとして閉じ (転送完了応答を確認し、その
+// エラーは fetch を失敗させる)、deferred close が全エラー経路をカバーするため、
+// 失敗したダウンロードがデータコネクションをリークすることはない。
+// close は高々 1 回しか実行されない。
 func downloadAndClose(name, destDir string, resp io.ReadCloser, want int64) (string, error) {
 	closed := false
 	var closeErr error
@@ -131,7 +131,7 @@ func downloadAndClose(name, destDir string, resp io.ReadCloser, want int64) (str
 	return writeTempAndRename(name, destDir, resp, want, closeResp)
 }
 
-// Remove deletes the original file after archive save success (delete handling).
+// Remove は archive 保存成功後に元ファイルを削除する (delete 扱い)。
 func (c *FTP) Remove(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -149,7 +149,7 @@ func (c *FTP) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// Close quits the control connection if one was established.
+// Close は制御コネクションが確立済みであれば切断する。
 func (c *FTP) Close() error {
 	if c.conn == nil {
 		return nil

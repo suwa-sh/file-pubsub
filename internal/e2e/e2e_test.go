@@ -1,6 +1,6 @@
-// Package e2e exercises the whole pipeline and the resident daemon over real
-// files: golden path (collect → archive → fan-out → manifest), idempotent
-// re-run, graceful shutdown and duplicate-start prevention.
+// Package e2e はパイプライン全体と常駐デーモンを実ファイルで動かして検証する:
+// ゴールデンパス (collect → archive → fan-out → manifest)、冪等な再実行、
+// グレースフルシャットダウン、二重起動防止。
 package e2e
 
 import (
@@ -75,7 +75,8 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func TestGoldenPathCycle(t *testing.T) {
+func TestRunCycle_ファイルを投入した場合_収集からファンアウトまで完走し再実行で重複しないこと(t *testing.T) {
+	// Arrange: パイプラインとソースファイルを用意する
 	f := newFixture(t, 60, 10, 9090)
 	clock := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	pipe := usecase.NewPipeline(f.cfg, logging.New(io.Discard), nil)
@@ -85,12 +86,13 @@ func TestGoldenPathCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Act: 初回観測 (安定判定の持ち越し) → 安定後のサイクルで収集〜ファンアウト
 	ctx := context.Background()
-	pipe.RunCycle(ctx) // first sighting: stability carry-over
+	pipe.RunCycle(ctx)
 	clock = clock.Add(11 * time.Second)
-	pipe.RunCycle(ctx) // stable: collect → archive → fan-out
+	pipe.RunCycle(ctx)
 
-	// Both subscriptions received the file under the original name.
+	// Assert: 両サブスクリプションが元のファイル名でファイルを受け取る
 	for _, dir := range []string{f.curDir, f.nextDir} {
 		p := filepath.Join(dir, "orders_1.csv")
 		if !exists(p) {
@@ -105,7 +107,7 @@ func TestGoldenPathCycle(t *testing.T) {
 		}
 	}
 
-	// The archive remains and the manifest is delivered.
+	// Assert: アーカイブが残りマニフェストは delivered、原本は削除済み (delete ハンドリング)
 	manifests, err := store.NewManifestStore(f.dataDir).List()
 	if err != nil || len(manifests) != 1 {
 		t.Fatalf("manifests = %d, err=%v", len(manifests), err)
@@ -117,12 +119,11 @@ func TestGoldenPathCycle(t *testing.T) {
 	if ok, _ := store.NewArchiveStore(f.dataDir).Exists("orders", m.MessageID); !ok {
 		t.Fatal("archive file must remain after delivery")
 	}
-	// The original was collected and deleted (delete handling).
 	if exists(filepath.Join(f.srcDir, "orders_1.csv")) {
 		t.Fatal("original file must be deleted from the source")
 	}
 
-	// Re-run: no double delivery, no re-collection.
+	// Act: 再実行 (コンシューマーが引き取った状態でもう 1 サイクル)
 	for _, dir := range []string{f.curDir, f.nextDir} {
 		if err := os.Remove(filepath.Join(dir, "orders_1.csv")); err != nil {
 			t.Fatal(err)
@@ -130,6 +131,8 @@ func TestGoldenPathCycle(t *testing.T) {
 	}
 	clock = clock.Add(time.Minute)
 	pipe.RunCycle(ctx)
+
+	// Assert: 二重配信も再収集も起きない
 	for _, dir := range []string{f.curDir, f.nextDir} {
 		if exists(filepath.Join(dir, "orders_1.csv")) {
 			t.Fatal("a delivered message must not be delivered twice")
@@ -141,7 +144,7 @@ func TestGoldenPathCycle(t *testing.T) {
 	}
 }
 
-// freePort reserves an ephemeral TCP port for the daemon test.
+// freePort はデーモンテスト用にエフェメラル TCP ポートを確保する。
 func freePort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -164,7 +167,8 @@ func waitFor(t *testing.T, timeout time.Duration, what string, cond func() bool)
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-func TestDaemonGracefulShutdown(t *testing.T) {
+func TestDaemonRun_停止シグナルを受けた場合_グレースフルに停止しロックが解放されること(t *testing.T) {
+	// Arrange: デーモンを起動して healthz が応答するまで待つ
 	port := freePort(t)
 	f := newFixture(t, 1, 1, port)
 
@@ -192,13 +196,13 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	})
 
-	// A second daemon on the same data dir is a duplicate start.
+	// Act & Assert: 同じ data dir で 2 つ目のデーモンを起動すると二重起動になる
 	second := runtime.New(f.cfg, pipe, lg, metrics, io.Discard)
 	if err := second.Run(context.Background()); !errors.Is(err, store.ErrAlreadyLocked) {
 		t.Fatalf("second daemon: err = %v, want ErrAlreadyLocked", err)
 	}
 
-	// Drop a file and wait for the daemon to deliver it everywhere.
+	// Act: ファイルを投入してデーモンの配信を待つ
 	if err := os.WriteFile(filepath.Join(f.srcDir, "live.csv"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +210,7 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		return exists(filepath.Join(f.curDir, "live.csv")) && exists(filepath.Join(f.nextDir, "live.csv"))
 	})
 
-	// The metrics endpoint exposes the per-topic counters while running.
+	// Assert: 稼働中の metrics エンドポイントがトピック別カウンタを公開している
 	waitFor(t, 10*time.Second, "processed_total metric", func() bool {
 		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/metrics", port))
 		if err != nil {
@@ -217,8 +221,10 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		return err == nil && strings.Contains(string(body), `file_pubsub_processed_total{topic="orders"} 1`)
 	})
 
-	// Stop signal → graceful shutdown: clean exit, lock released, HTTP down.
+	// Act: 停止シグナル → グレースフルシャットダウン
 	cancel()
+
+	// Assert: クリーンに終了し、ロックが解放され、HTTP が停止している
 	select {
 	case err := <-done:
 		if err != nil {
@@ -234,7 +240,7 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		t.Fatal("healthz must be unreachable after shutdown")
 	}
 
-	// The manifest recorded the delivery before the daemon stopped.
+	// Assert: デーモン停止前にマニフェストへ配信が記録され、原本は削除済み
 	manifests, err := store.NewManifestStore(f.dataDir).List()
 	if err != nil || len(manifests) != 1 {
 		t.Fatalf("manifests = %d, err=%v", len(manifests), err)

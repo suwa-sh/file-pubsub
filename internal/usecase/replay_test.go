@@ -11,6 +11,8 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
+// deliverAll はファンアウトを実行した後、コンシューマーが引き取った状態を
+// 再現するため全サブスクリプションのファイルを取り除く。
 func deliverAll(t *testing.T, e *testEnv) {
 	t.Helper()
 	e.p.Fanout(context.Background())
@@ -27,14 +29,18 @@ func deliverAll(t *testing.T, e *testEnv) {
 	}
 }
 
-func TestReplayMessageIDPlacesOnlyDestination(t *testing.T) {
+func TestReplay_messageIDを指定した場合_指定サブスクリプションにのみ配置されること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	deliverAll(t, e)
 
+	// Act
 	count, err := e.p.Replay(context.Background(), ReplayParams{
 		Topic: "orders", MessageID: m.MessageID, Subscription: "next",
 	})
+
+	// Assert
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +70,8 @@ func TestReplayMessageIDPlacesOnlyDestination(t *testing.T) {
 	}
 }
 
-func TestReplayPeriodSelectsByCollectedAt(t *testing.T) {
+func TestReplay_期間を指定した場合_collectedAtが期間内のメッセージのみ再配置されること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	e.clock.Set(time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC))
 	e.seedArchived("a.csv", "a")
@@ -74,12 +81,15 @@ func TestReplayPeriodSelectsByCollectedAt(t *testing.T) {
 	e.seedArchived("c.csv", "c")
 	deliverAll(t, e)
 
+	// Act
 	count, err := e.p.Replay(context.Background(), ReplayParams{
 		Topic:        "orders",
 		From:         time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 		To:           time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
 		Subscription: "next",
 	})
+
+	// Assert
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +104,8 @@ func TestReplayPeriodSelectsByCollectedAt(t *testing.T) {
 	}
 }
 
-func TestReplayRecoversDLQSubscription(t *testing.T) {
+func TestReplay_DLQ隔離済みのサブスクリプションの場合_deliveredに回復すること(t *testing.T) {
+	// Arrange: next を DLQ 隔離まで追い込んでから配信先を回復させる
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
@@ -109,11 +120,14 @@ func TestReplayRecoversDLQSubscription(t *testing.T) {
 	if s := subState(t, got, "next"); s.Status != domain.SubscriptionDLQ {
 		t.Fatalf("precondition: next = %s, want dlq", s.Status)
 	}
-
 	e.setSubscriptionDir("next", t.TempDir())
+
+	// Act
 	count, err := e.p.Replay(context.Background(), ReplayParams{
 		Topic: "orders", MessageID: m.MessageID, Subscription: "next",
 	})
+
+	// Assert
 	if err != nil || count != 1 {
 		t.Fatalf("replay: count=%d err=%v", count, err)
 	}
@@ -126,24 +140,28 @@ func TestReplayRecoversDLQSubscription(t *testing.T) {
 	}
 }
 
-func TestReplayValidation(t *testing.T) {
+func TestReplay_引数が不正な場合_UsageErrorになること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	may1 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name   string
 		params ReplayParams
 	}{
-		{"missing topic", ReplayParams{Subscription: "next", MessageID: "x"}},
-		{"unknown topic", ReplayParams{Topic: "nope", Subscription: "next", MessageID: "x"}},
-		{"missing subscription", ReplayParams{Topic: "orders", MessageID: "x"}},
-		{"unknown subscription", ReplayParams{Topic: "orders", Subscription: "nope", MessageID: "x"}},
-		{"both message and period", ReplayParams{Topic: "orders", Subscription: "next", MessageID: "x", From: may1, To: may1}},
-		{"neither message nor period", ReplayParams{Topic: "orders", Subscription: "next"}},
-		{"from only", ReplayParams{Topic: "orders", Subscription: "next", From: may1}},
-		{"to before from", ReplayParams{Topic: "orders", Subscription: "next", From: may1, To: may1.AddDate(0, 0, -1)}},
+		{"topic未指定の場合_UsageErrorになること", ReplayParams{Subscription: "next", MessageID: "x"}},
+		{"未定義topicの場合_UsageErrorになること", ReplayParams{Topic: "nope", Subscription: "next", MessageID: "x"}},
+		{"subscription未指定の場合_UsageErrorになること", ReplayParams{Topic: "orders", MessageID: "x"}},
+		{"未定義subscriptionの場合_UsageErrorになること", ReplayParams{Topic: "orders", Subscription: "nope", MessageID: "x"}},
+		{"messageIDと期間を併用した場合_UsageErrorになること", ReplayParams{Topic: "orders", Subscription: "next", MessageID: "x", From: may1, To: may1}},
+		{"messageIDも期間も無い場合_UsageErrorになること", ReplayParams{Topic: "orders", Subscription: "next"}},
+		{"fromのみ指定した場合_UsageErrorになること", ReplayParams{Topic: "orders", Subscription: "next", From: may1}},
+		{"toがfromより前の場合_UsageErrorになること", ReplayParams{Topic: "orders", Subscription: "next", From: may1, To: may1.AddDate(0, 0, -1)}},
 	}
 	for _, c := range cases {
+		// Act
 		_, err := e.p.Replay(context.Background(), c.params)
+
+		// Assert
 		var usage UsageError
 		if !errors.As(err, &usage) {
 			t.Fatalf("%s: err = %v, want UsageError", c.name, err)
@@ -151,16 +169,21 @@ func TestReplayValidation(t *testing.T) {
 	}
 }
 
-func TestReplayMissingArchiveFails(t *testing.T) {
+func TestReplay_アーカイブが削除済みの場合_実行時エラーで失敗すること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	deliverAll(t, e)
 	if err := e.p.Archive.Delete("orders", m.MessageID); err != nil {
 		t.Fatal(err)
 	}
+
+	// Act
 	_, err := e.p.Replay(context.Background(), ReplayParams{
 		Topic: "orders", MessageID: m.MessageID, Subscription: "next",
 	})
+
+	// Assert
 	if err == nil {
 		t.Fatal("replay of a retention-deleted archive must fail")
 	}

@@ -1,7 +1,6 @@
-// Command file-pubsub is the single binary providing the daemon (serve) and
-// the operations CLI (status / replay / config validate). Exit codes follow
-// ui-design.md: 0 success, 1 runtime error, 2 config/argument error,
-// 3 duplicate start.
+// Command file-pubsub は、常駐デーモン (serve) と運用 CLI (status / replay /
+// config validate) を提供するシングルバイナリである。終了コードは
+// ui-design.md に従う: 0 成功、1 実行時エラー、2 設定・引数エラー、3 二重起動。
 package main
 
 import (
@@ -64,7 +63,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// loadConfig resolves --config; every failure here is exit code 2.
+// loadConfig は --config を解決する。ここでの失敗はすべて終了コード 2 になる。
 func loadConfig(path string, stderr io.Writer) (*config.Config, bool) {
 	if path == "" {
 		_, _ = fmt.Fprintln(stderr, "--config is required. specify the path of the single YAML config file")

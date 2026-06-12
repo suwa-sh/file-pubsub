@@ -10,9 +10,9 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-// Manifest is the per-message delivery record (manifest/{message_id}.json).
-// Field names follow object-storage-schema.yaml schemas.manifest_json exactly.
-// The manifest is the single source of truth for delivery state (CTR-003).
+// Manifest はメッセージ単位の配信記録 (manifest/{message_id}.json)。
+// フィールド名は object-storage-schema.yaml schemas.manifest_json に厳密に従う。
+// manifest は配信状態の唯一の正本である (CTR-003)。
 type Manifest struct {
 	MessageID         string                 `json:"message_id"`
 	Topic             string                 `json:"topic"`
@@ -29,7 +29,7 @@ type Manifest struct {
 	DeliveryEvents    []DeliveryEvent        `json:"delivery_events,omitempty"`
 }
 
-// SubscriptionDelivery is one element of manifest_json.subscriptions.
+// SubscriptionDelivery は manifest_json.subscriptions の要素 1 つ。
 type SubscriptionDelivery struct {
 	Subscription string                    `json:"subscription"`
 	Status       domain.SubscriptionStatus `json:"status"`
@@ -37,15 +37,15 @@ type SubscriptionDelivery struct {
 	LastError    string                    `json:"last_error,omitempty"`
 }
 
-// ReplayRecord is one element of manifest_json.replay_records (SP-102).
+// ReplayRecord は manifest_json.replay_records の要素 1 つ (SP-102)。
 type ReplayRecord struct {
 	ReplayedAt          time.Time `json:"replayed_at"`
 	TargetSubscriptions []string  `json:"target_subscriptions"`
 	Result              string    `json:"result"`
 }
 
-// DeliveryEvent is one element of the append-only manifest_json.delivery_events
-// audit log (NFR E.7.1.1).
+// DeliveryEvent は追記専用の監査ログ manifest_json.delivery_events の要素 1 つ
+// (NFR E.7.1.1)。
 type DeliveryEvent struct {
 	At           time.Time `json:"at"`
 	Subscription string    `json:"subscription,omitempty"`
@@ -53,7 +53,7 @@ type DeliveryEvent struct {
 	Detail       string    `json:"detail,omitempty"`
 }
 
-// NewManifest builds the initial collected record (Collect UC).
+// NewManifest は collected 状態の初期記録を生成する (Collect UC)。
 func NewManifest(msg domain.Message) *Manifest {
 	return &Manifest{
 		MessageID:        msg.MessageID,
@@ -65,8 +65,8 @@ func NewManifest(msg domain.Message) *Manifest {
 	}
 }
 
-// SetSubscriptionState records the current delivery state of one subscription,
-// replacing its previous current state (delivery history goes to DeliveryEvents).
+// SetSubscriptionState は subscription 1 件の現在の配信状態を記録し、以前の現在
+// 状態を置き換える (配信履歴は DeliveryEvents に残す)。
 func (m *Manifest) SetSubscriptionState(name string, status domain.SubscriptionStatus, deliveredAt *time.Time, lastError string) {
 	for i := range m.Subscriptions {
 		if m.Subscriptions[i].Subscription == name {
@@ -84,8 +84,8 @@ func (m *Manifest) SetSubscriptionState(name string, status domain.SubscriptionS
 	})
 }
 
-// SubscriptionStates maps subscription name to its current delivery status,
-// the input of the idempotent-redelivery decision (SR-003).
+// SubscriptionStates は subscription 名から現在の配信状態へのマップを返す。
+// 冪等再配信判定 (SR-003) の入力となる。
 func (m *Manifest) SubscriptionStates() map[string]domain.SubscriptionStatus {
 	states := make(map[string]domain.SubscriptionStatus, len(m.Subscriptions))
 	for _, s := range m.Subscriptions {
@@ -94,22 +94,22 @@ func (m *Manifest) SubscriptionStates() map[string]domain.SubscriptionStatus {
 	return states
 }
 
-// AppendEvent appends one delivery event to the audit log.
+// AppendEvent は監査ログに配信イベントを 1 件追記する。
 func (m *Manifest) AppendEvent(e DeliveryEvent) {
 	m.DeliveryEvents = append(m.DeliveryEvents, e)
 }
 
-// AppendReplay appends one replay record (SP-102).
+// AppendReplay は replay 記録を 1 件追記する (SP-102)。
 func (m *Manifest) AppendReplay(r ReplayRecord) {
 	m.ReplayRecords = append(m.ReplayRecords, r)
 }
 
-// ManifestStore reads and writes manifest/{message_id}.json.
+// ManifestStore は manifest/{message_id}.json の読み書きを行う。
 type ManifestStore struct {
 	dir string
 }
 
-// NewManifestStore roots the store at dataDir/manifest.
+// NewManifestStore は dataDir/manifest を起点とするストアを返す。
 func NewManifestStore(dataDir string) *ManifestStore {
 	return &ManifestStore{dir: filepath.Join(dataDir, "manifest")}
 }
@@ -118,7 +118,7 @@ func (s *ManifestStore) path(messageID string) string {
 	return filepath.Join(s.dir, messageID+".json")
 }
 
-// Get loads the manifest of messageID.
+// Get は messageID の manifest を読み込む。
 func (s *ManifestStore) Get(messageID string) (*Manifest, error) {
 	var m Manifest
 	if err := readJSON(s.path(messageID), &m); err != nil {
@@ -127,7 +127,7 @@ func (s *ManifestStore) Get(messageID string) (*Manifest, error) {
 	return &m, nil
 }
 
-// Put persists the manifest with AtomicWrite.
+// Put は manifest を AtomicWrite で永続化する。
 func (s *ManifestStore) Put(m *Manifest) error {
 	if m.MessageID == "" {
 		return fmt.Errorf("put manifest: message_id is empty")
@@ -141,7 +141,7 @@ func (s *ManifestStore) Put(m *Manifest) error {
 	return nil
 }
 
-// List loads every manifest, sorted by message_id (file name ascending, SR-005).
+// List はすべての manifest を message_id 順 (ファイル名昇順, SR-005) で読み込む。
 func (s *ManifestStore) List() ([]*Manifest, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {

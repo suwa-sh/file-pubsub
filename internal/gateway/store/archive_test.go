@@ -12,21 +12,28 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-func TestArchiveStore_PutWorkAndPromote(t *testing.T) {
+func TestArchiveStore_PutWorkしてPromoteした場合_アーカイブに昇格しワークファイルが消えること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewArchiveStore(dataDir)
 	id := "20260612T093001_orders_sales.csv"
 
+	// Act (PutWork)
 	if err := s.PutWork("orders", id, strings.NewReader("payload")); err != nil {
 		t.Fatalf("PutWork: %v", err)
 	}
+
+	// Assert (PutWork)
 	if _, err := os.Stat(s.WorkPath("orders", id)); err != nil {
 		t.Fatalf("work file missing: %v", err)
 	}
 
+	// Act (Promote)
 	if err := s.Promote("orders", id); err != nil {
 		t.Fatalf("Promote: %v", err)
 	}
+
+	// Assert (Promote)
 	if _, err := os.Stat(s.WorkPath("orders", id)); !os.IsNotExist(err) {
 		t.Error("work file must be removed after promote")
 	}
@@ -45,7 +52,8 @@ func TestArchiveStore_PutWorkAndPromote(t *testing.T) {
 	}
 }
 
-func TestArchiveStore_PromoteIsIdempotent(t *testing.T) {
+func TestArchiveStore_Promote_中断後に再実行した場合_冪等に成功すること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewArchiveStore(dataDir)
 	id := "m1"
@@ -55,16 +63,21 @@ func TestArchiveStore_PromoteIsIdempotent(t *testing.T) {
 	if err := s.Promote("orders", id); err != nil {
 		t.Fatal(err)
 	}
-	// Re-run after interruption: same work content again, promote overwrites the same path.
+
+	// Act: 中断後の再実行 — 同じワーク内容を再投入し、promote が同じパスを上書きする
 	if err := s.PutWork("orders", id, strings.NewReader("v1")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Promote("orders", id); err != nil {
+	err := s.Promote("orders", id)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("idempotent promote: %v", err)
 	}
 }
 
-func TestArchiveStore_ListAndDelete_Retention(t *testing.T) {
+func TestArchiveStore_retention対象を削除した場合_期限切れだけが消えて昇順一覧が維持されること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewArchiveStore(dataDir)
 
@@ -76,12 +89,15 @@ func TestArchiveStore_ListAndDelete_Retention(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Leftover temp file must not appear in the scan.
+	// 残留した一時ファイルはスキャンに現れてはならない
 	if err := os.WriteFile(filepath.Join(dataDir, "archive", "orders", "x.tmp"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	// Act (List)
 	ids, err := s.ListMessageIDs("orders")
+
+	// Assert (List)
 	if err != nil {
 		t.Fatalf("ListMessageIDs: %v", err)
 	}
@@ -90,7 +106,7 @@ func TestArchiveStore_ListAndDelete_Retention(t *testing.T) {
 		t.Errorf("ids = %v, want %v", ids, want)
 	}
 
-	// Retention decision (domain) + deletion (store): only the expired file goes.
+	// Arrange (retention 判定 (domain) + 削除 (store): 期限切れのファイルだけが消える)
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	savedAtOld := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	savedAtNew := time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC)
@@ -100,31 +116,44 @@ func TestArchiveStore_ListAndDelete_Retention(t *testing.T) {
 	if domain.IsExpired(domain.RetentionDeadline(savedAtNew, 90), now) {
 		t.Fatal("new file must be kept")
 	}
+
+	// Act (Delete)
 	if err := s.Delete("orders", want[0]); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
+
+	// Assert (Delete)
 	ids, _ = s.ListMessageIDs("orders")
 	if !reflect.DeepEqual(ids, []string{want[1]}) {
 		t.Errorf("after delete ids = %v, want only %v", ids, want[1])
 	}
 }
 
-func TestArchiveStore_DeleteMissingIsNoError(t *testing.T) {
+func TestArchiveStore_Delete_対象ファイルが無い場合_エラーにならないこと(t *testing.T) {
+	// Arrange
 	s := NewArchiveStore(t.TempDir())
+
+	// Act & Assert
 	if err := s.Delete("orders", "nope"); err != nil {
 		t.Errorf("deleting a missing archive must be idempotent: %v", err)
 	}
 }
 
-func TestArchiveStore_ListMissingTopic(t *testing.T) {
+func TestArchiveStore_ListMessageIDs_topicが存在しない場合_空で返ること(t *testing.T) {
+	// Arrange
 	s := NewArchiveStore(t.TempDir())
+
+	// Act
 	ids, err := s.ListMessageIDs("nope")
+
+	// Assert
 	if err != nil || ids != nil {
 		t.Errorf("missing topic: got %v, %v", ids, err)
 	}
 }
 
-func TestArchiveStore_CleanupWorkTempFiles(t *testing.T) {
+func TestArchiveStore_CleanupWorkTempFiles_tmpが残っている場合_tmpだけ削除され最終名は残ること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewArchiveStore(dataDir)
 	if err := s.PutWork("orders", "keep", strings.NewReader("k")); err != nil {
@@ -134,7 +163,12 @@ func TestArchiveStore_CleanupWorkTempFiles(t *testing.T) {
 	if err := os.WriteFile(tmp, []byte("partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CleanupWorkTempFiles("orders"); err != nil {
+
+	// Act
+	err := s.CleanupWorkTempFiles("orders")
+
+	// Assert
+	if err != nil {
 		t.Fatalf("CleanupWorkTempFiles: %v", err)
 	}
 	if _, err := os.Stat(tmp); !os.IsNotExist(err) {

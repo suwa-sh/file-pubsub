@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// ValidationError reports one config violation as "key path + cause + remedy"
-// (ui-design.md config validate output, SR-101).
+// ValidationError は設定違反 1 件を「キーパス + 原因 + 対処」で報告する
+// (ui-design.md config validate 出力, SR-101)。
 type ValidationError struct {
 	KeyPath string
 	Cause   string
@@ -19,8 +19,8 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("NG: %s\ncause: %s\nremedy: %s", e.KeyPath, e.Cause, e.Remedy)
 }
 
-// ValidationErrors aggregates every violation so the caller can report all of
-// them at once and exit with code 2.
+// ValidationErrors は全違反を集約し、呼び出し側が一括報告して exit code 2 で
+// 終了できるようにする。
 type ValidationErrors []ValidationError
 
 func (e ValidationErrors) Error() string {
@@ -31,20 +31,20 @@ func (e ValidationErrors) Error() string {
 	return strings.Join(msgs, "\n")
 }
 
-// namePattern restricts topic / subscription names to safe path components:
-// they become directory / file names under data_dir (archive / dlq /
-// processed), so path separators and traversal sequences must be rejected.
+// namePattern は topic / subscription 名を安全なパス要素に制限する:
+// これらは data_dir 配下 (archive / dlq / processed) のディレクトリ・ファイル名に
+// なるため、パス区切り文字やトラバーサル列は拒否しなければならない。
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// isSafeName reports whether name is a safe single path component.
+// isSafeName は name が安全な単一パス要素かどうかを返す。
 func isSafeName(name string) bool {
 	return name != "." && name != ".." && namePattern.MatchString(name)
 }
 
 const nameRemedy = `use only letters, digits, ".", "_" and "-" (no path separators; "." and ".." alone are not allowed)`
 
-// Validate checks required keys, enum values, name duplication and reference
-// integrity (SR-101). It returns all violations, not just the first one.
+// Validate は必須キー・enum 値・名前の重複・参照整合性を検査する (SR-101)。
+// 最初の 1 件だけでなく、すべての違反を返す。
 func Validate(c *Config) ValidationErrors {
 	var errs ValidationErrors
 	add := func(keyPath, cause, remedy string) {
@@ -105,6 +105,7 @@ func Validate(c *Config) ValidationErrors {
 	return errs
 }
 
+// validateSource はソース定義 1 件を検査し、違反を add で報告する。
 func validateSource(s Source, keyPath string, add func(keyPath, cause, remedy string)) {
 	switch s.Type {
 	case SourceTypeLocal, SourceTypeFTP, SourceTypeSFTP, SourceTypeSCP:

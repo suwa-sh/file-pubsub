@@ -9,8 +9,8 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-// seedStatusFixture produces: msg A delivered to both subscriptions, msg B
-// with next isolated to DLQ (current delivered), msg C replayed to next.
+// seedStatusFixture は次の状態を作る: メッセージ A は両サブスクリプションに
+// 配信済み、B は next が DLQ 隔離 (current は配信済み)、C は next へリプレイ済み。
 func seedStatusFixture(t *testing.T, e *testEnv) (a, b, c string) {
 	t.Helper()
 	ma := e.seedArchived("a.csv", "a")
@@ -34,11 +34,15 @@ func seedStatusFixture(t *testing.T, e *testEnv) (a, b, c string) {
 	return ma.MessageID, mb.MessageID, mc.MessageID
 }
 
-func TestStatusRowsAndFilters(t *testing.T) {
+func TestStatusRows_各フィルタを指定した場合_該当行のみ返ること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	a, b, c := seedStatusFixture(t, e)
 
+	// Act: フィルタなし
 	rows, err := e.p.StatusRows(StatusFilter{})
+
+	// Assert: メッセージ × サブスクリプションの全行が返る
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +50,10 @@ func TestStatusRowsAndFilters(t *testing.T) {
 		t.Fatalf("rows = %d, want 6 (3 messages x 2 subscriptions)", len(rows))
 	}
 
+	// Act: status フィルタ
 	failedDLQ, err := e.p.StatusRows(StatusFilter{Status: "dlq"})
+
+	// Assert: dlq の行のみ返る
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +64,10 @@ func TestStatusRowsAndFilters(t *testing.T) {
 		t.Fatal("a dlq row must have no delivered_at")
 	}
 
+	// Act: subscription フィルタ
 	bySub, err := e.p.StatusRows(StatusFilter{Subscription: "current"})
+
+	// Assert: current の行のみ返る
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +80,10 @@ func TestStatusRowsAndFilters(t *testing.T) {
 		}
 	}
 
+	// Act: 未知の topic フィルタ
 	byTopic, err := e.p.StatusRows(StatusFilter{Topic: "unknown"})
+
+	// Assert: 何も一致しない
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +91,7 @@ func TestStatusRowsAndFilters(t *testing.T) {
 		t.Fatalf("unknown topic filter must match nothing, got %d", len(byTopic))
 	}
 
-	// The replay flag marks only the replayed subscription of message C.
+	// Assert: replay フラグはメッセージ C のリプレイ先サブスクリプションのみに立つ
 	for _, r := range rows {
 		wantReplay := r.MessageID == c && r.Subscription == "next"
 		if r.Replay != wantReplay {
@@ -88,15 +101,19 @@ func TestStatusRowsAndFilters(t *testing.T) {
 	_ = a
 }
 
-func TestSummarizeStatus(t *testing.T) {
+func TestSummarizeStatus_行を集計した場合_topicとsubscriptionごとの件数になること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	seedStatusFixture(t, e)
-
 	rows, err := e.p.StatusRows(StatusFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Act
 	sums := SummarizeStatus(rows)
+
+	// Assert
 	if len(sums) != 2 {
 		t.Fatalf("summaries = %d, want 2", len(sums))
 	}
@@ -109,11 +126,15 @@ func TestSummarizeStatus(t *testing.T) {
 	}
 }
 
-func TestDLQList(t *testing.T) {
+func TestDLQList_DLQメッセージがある場合_隔離メタが返りtopicフィルタが効くこと(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	_, b, _ := seedStatusFixture(t, e)
 
+	// Act: フィルタなし
 	metas, err := e.p.DLQList("")
+
+	// Assert: 隔離メタが返る
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +145,10 @@ func TestDLQList(t *testing.T) {
 		t.Fatalf("dlq meta = %+v", metas[0])
 	}
 
+	// Act: 別 topic でフィルタ
 	none, err := e.p.DLQList("other")
+
+	// Assert: 他 topic は除外される
 	if err != nil {
 		t.Fatal(err)
 	}

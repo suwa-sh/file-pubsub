@@ -1,6 +1,6 @@
-// Package config loads and validates the single YAML configuration file
-// (CTP-003) with ${ENV_VAR} expansion for credentials and other string values
-// (CTP-002). Validation failures map to exit code 2 (ui-design.md).
+// Package config は単一 YAML 設定ファイル (CTP-003) の読み込みとバリデーションを担う。
+// 認証情報などの文字列値は ${ENV_VAR} 展開に対応する (CTP-002)。
+// バリデーション失敗は exit code 2 に対応する (ui-design.md)。
 package config
 
 import (
@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Source types (ui-design.md: ftp / sftp / scp / local).
+// ソース種別 (ui-design.md: ftp / sftp / scp / local)。
 const (
 	SourceTypeLocal = "local"
 	SourceTypeFTP   = "ftp"
@@ -20,23 +20,23 @@ const (
 	SourceTypeSCP   = "scp"
 )
 
-// Original file handling (SP-004): delete (collect & remove, default) / copy (leave).
+// 元ファイルの扱い (SP-004): delete (収集して削除、デフォルト) / copy (残す)。
 const (
 	HandlingDelete = "delete"
 	HandlingCopy   = "copy"
 )
 
-// Config is the whole single-YAML configuration (E-001).
+// Config は単一 YAML 設定の全体を表す (E-001)。
 type Config struct {
-	PollingInterval  int     `yaml:"polling_interval"`  // seconds
-	ArchiveRetention int     `yaml:"archive_retention"` // days (SP-006)
+	PollingInterval  int     `yaml:"polling_interval"`  // 秒
+	ArchiveRetention int     `yaml:"archive_retention"` // 日 (SP-006)
 	RetryMaxCount    int     `yaml:"retry_max_count"`   // SR-004
 	MetricsPort      int     `yaml:"metrics_port"`
-	DataDir          string  `yaml:"data_dir"` // defaults to the config.yaml directory
+	DataDir          string  `yaml:"data_dir"` // デフォルトは config.yaml のあるディレクトリ
 	Topics           []Topic `yaml:"topics"`
 }
 
-// Topic defines one logical file kind and its source / subscriptions (E-002).
+// Topic は論理的なファイル種別 1 つとそのソース / subscription 群を定義する (E-002)。
 type Topic struct {
 	Name          string         `yaml:"name"`
 	Description   string         `yaml:"description"`
@@ -44,32 +44,32 @@ type Topic struct {
 	Subscriptions []Subscription `yaml:"subscriptions"`
 }
 
-// Source defines where files are collected from (E-004).
+// Source はファイルの収集元を定義する (E-004)。
 type Source struct {
 	Type                 string         `yaml:"type"`
-	Host                 string         `yaml:"host"` // not used for local
-	Port                 int            `yaml:"port"` // optional, protocol default when 0
+	Host                 string         `yaml:"host"` // local では使わない
+	Port                 int            `yaml:"port"` // 任意。0 のときはプロトコル既定値
 	Directory            string         `yaml:"directory"`
-	OriginalFileHandling string         `yaml:"original_file_handling"` // delete (default) / copy
+	OriginalFileHandling string         `yaml:"original_file_handling"` // delete (デフォルト) / copy
 	StabilityCheck       StabilityCheck `yaml:"stability_check"`
 	ExcludePatterns      []string       `yaml:"exclude_patterns"`
 	Auth                 Auth           `yaml:"auth"`
 }
 
-// StabilityCheck configures the write-completion check (SP-003).
+// StabilityCheck は書き込み完了 (安定) 判定の設定 (SP-003)。
 type StabilityCheck struct {
-	Interval int `yaml:"interval"` // seconds between size/mtime stability observations
+	Interval int `yaml:"interval"` // サイズ/mtime の安定観測の間隔 (秒)
 }
 
-// Auth holds credentials for remote sources (E-005, CTP-002). Plain text is
-// allowed; ${ENV_VAR} references and key files are the recommended forms.
+// Auth はリモートソース用の認証情報を保持する (E-005, CTP-002)。平文も許容するが、
+// ${ENV_VAR} 参照と鍵ファイルが推奨形式。
 type Auth struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	KeyFile  string `yaml:"key_file"`
 }
 
-// Subscription defines one delivery target directory (E-003).
+// Subscription は配信先ディレクトリ 1 つを定義する (E-003)。
 type Subscription struct {
 	Name      string `yaml:"name"`
 	Directory string `yaml:"directory"`
@@ -77,8 +77,8 @@ type Subscription struct {
 
 var envRefPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
-// ExpandEnv replaces every ${ENV_VAR} reference in raw with the environment
-// value. References to undefined variables are collected as validation errors.
+// ExpandEnv は raw 中のすべての ${ENV_VAR} 参照を環境変数の値で置換する。
+// 未定義の変数への参照はバリデーションエラーとして収集される。
 func ExpandEnv(raw []byte) ([]byte, ValidationErrors) {
 	var errs ValidationErrors
 	seen := map[string]bool{}
@@ -101,9 +101,9 @@ func ExpandEnv(raw []byte) ([]byte, ValidationErrors) {
 	return expanded, errs
 }
 
-// Load reads the YAML at path, expands ${ENV_VAR} references, applies
-// defaults, and validates. All validation errors are returned together as a
-// ValidationErrors so the caller can map them to exit code 2.
+// Load は path の YAML を読み込み、${ENV_VAR} 参照を展開し、デフォルト値を適用して
+// バリデーションする。呼び出し側が exit code 2 に対応づけられるよう、バリデーション
+// エラーは ValidationErrors としてまとめて返す。
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -124,9 +124,9 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// applyDefaults fills values the spec defines as defaulted: data_dir is the
-// config.yaml directory (object-storage-schema.yaml) and the original file
-// handling defaults to delete (SP-004).
+// applyDefaults は spec がデフォルト値を定める項目を補完する: data_dir は
+// config.yaml のあるディレクトリ (object-storage-schema.yaml)、元ファイルの扱いは
+// delete がデフォルト (SP-004)。
 func (c *Config) applyDefaults(configPath string) {
 	if c.DataDir == "" {
 		c.DataDir = filepath.Dir(configPath)

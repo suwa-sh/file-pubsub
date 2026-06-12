@@ -10,16 +10,15 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
 
-// Retry handles every failed message: within retry_max_count the failed
-// subscriptions are redelivered from the archive; beyond it the message is
-// isolated to dlq/{topic}/{message_id} (+ .meta.json) and excluded from
-// automatic redelivery (SR-004; replay is the only way back).
+// Retry は failed の全メッセージを処理する: retry_max_count 以内なら失敗した
+// サブスクリプションへアーカイブから再配信し、超過したらメッセージを
+// dlq/{topic}/{message_id} (+ .meta.json) へ隔離して自動再配信から除外する
+// (SR-004。復帰手段は replay のみ)。
 //
-// Messages already in the retrying state are picked up too: a crash right
-// after the failed → retrying manifest write would otherwise leave the
-// message stuck forever. Re-entry is safe because redelivery skips delivered
-// subscriptions via the manifest (SR-003) and DLQStore.Isolate overwrites the
-// same dlq paths idempotently.
+// retrying 状態のメッセージも拾う: failed → retrying のマニフェスト書き込み
+// 直後にクラッシュすると、放置すればメッセージが永遠に固まるため。再入が
+// 安全なのは、再配信がマニフェストに基づき配信済みサブスクリプションを
+// スキップし (SR-003)、DLQStore.Isolate が同じ dlq パスを冪等に上書きするから。
 func (p *Pipeline) Retry(ctx context.Context) {
 	manifests, err := p.Manifests.List()
 	if err != nil {
@@ -69,10 +68,10 @@ func (p *Pipeline) Retry(ctx context.Context) {
 	}
 }
 
-// isolateToDLQ copies the archive file into the DLQ with its isolation meta,
-// marks every failed subscription dlq and finishes the message as dlq.
-// DLQStore.Isolate overwrites the same dlq paths, so re-running for a message
-// stuck in retrying (crash recovery) never double-isolates.
+// isolateToDLQ はアーカイブファイルを隔離メタとともに DLQ へコピーし、失敗した
+// 全サブスクリプションを dlq にマークしてメッセージを dlq として決着させる。
+// DLQStore.Isolate は同じ dlq パスを上書きするため、retrying で固まった
+// メッセージへの再実行 (クラッシュ復旧) で二重隔離は起きない。
 func (p *Pipeline) isolateToDLQ(m *store.Manifest, t *config.Topic) {
 	now := p.now()
 	var failedSubs []string
@@ -97,7 +96,7 @@ func (p *Pipeline) isolateToDLQ(m *store.Manifest, t *config.Topic) {
 		IsolatedAt:      now,
 	}
 	if err := p.DLQ.Isolate(p.Archive.ArchivePath(m.Topic, m.MessageID), meta); err != nil {
-		// Manifest keeps failed so the isolation is retried next cycle.
+		// マニフェストを failed のまま保ち、次サイクルで隔離を再試行する。
 		m.Status = domain.StatusFailed
 		_ = p.Manifests.Put(m)
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "dlq_isolation_failed", ErrorDetail: fmt.Sprintf("%v. check the dlq directory permissions and disk space; the isolation is retried on the next polling cycle", err)})

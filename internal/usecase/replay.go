@@ -11,8 +11,8 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
 
-// UsageError marks an argument / validation failure: the CLI maps it to exit
-// code 2 and nothing is placed (LR-401 feedforward).
+// UsageError は引数・バリデーションの失敗を表す: CLI はこれを終了コード 2 に
+// 対応づけ、ファイルは一切配置されない (LR-401 フィードフォワード)。
 type UsageError struct{ msg string }
 
 func (e UsageError) Error() string { return e.msg }
@@ -21,17 +21,17 @@ func usageErrorf(format string, args ...any) error {
 	return UsageError{msg: fmt.Sprintf(format, args...)}
 }
 
-// ReplayParams selects the replay targets: a topic plus either one message_id
-// or a collected_at date range, and the single destination subscription.
+// ReplayParams はリプレイ対象を選択する: トピックに加えて、message_id 1 件
+// または collected_at の日付範囲のいずれかと、配置先サブスクリプション 1 件。
 type ReplayParams struct {
 	Topic        string
 	MessageID    string
-	From, To     time.Time // inclusive dates; zero when MessageID is used
+	From, To     time.Time // 両端を含む日付。MessageID 指定時はゼロ値
 	Subscription string
 }
 
-// ValidateReplay rejects invalid parameter combinations before anything is
-// placed (LR-401).
+// ValidateReplay は不正なパラメータの組み合わせを、配置が始まる前に拒否する
+// (LR-401)。
 func (p *Pipeline) ValidateReplay(params ReplayParams) error {
 	if params.Topic == "" {
 		return usageErrorf("--topic is required. specify the topic of the messages to replay")
@@ -61,13 +61,13 @@ func (p *Pipeline) ValidateReplay(params ReplayParams) error {
 	return nil
 }
 
-// Replay re-places archived messages into the destination subscription with
-// AtomicWrite and appends a replay record to each manifest (SP-102). Other
-// subscriptions are never touched. It returns the number of placed messages.
+// Replay はアーカイブ済みメッセージを配置先サブスクリプションへ AtomicWrite で
+// 再配置し、各マニフェストにリプレイ記録を追記する (SP-102)。他の
+// サブスクリプションには一切触れない。戻り値は配置したメッセージ数。
 //
-// Replay rewrites manifests, so the caller must hold the data-dir lock
-// (store.LockManager) before invoking it: running concurrently with serve
-// would lose manifest updates to last-writer-wins races.
+// Replay はマニフェストを書き換えるため、呼び出し側は事前に data-dir ロック
+// (store.LockManager) を保持しなければならない: serve と並行実行すると
+// last-writer-wins の競合でマニフェスト更新が失われる。
 func (p *Pipeline) Replay(ctx context.Context, params ReplayParams) (int, error) {
 	if err := p.ValidateReplay(params); err != nil {
 		return 0, err

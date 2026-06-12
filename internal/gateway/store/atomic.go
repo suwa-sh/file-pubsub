@@ -1,7 +1,7 @@
-// Package store implements the data-directory file stores defined in
-// object-storage-schema.yaml. All writes go through AtomicWrite: a temp name
-// in the same directory, fsync, then rename (SR-001, LR-301), so a file under
-// its final name is always complete.
+// Package store は object-storage-schema.yaml で定義されたデータディレクトリの
+// ファイルストアを実装する。すべての書き込みは AtomicWrite を経由する: 同一
+// ディレクトリ内の一時名 → fsync → rename (SR-001, LR-301)。これにより最終名の
+// ファイルは常に完全な内容である。
 package store
 
 import (
@@ -15,7 +15,7 @@ import (
 
 const tempSuffix = ".tmp"
 
-// WriteFileAtomic writes r to dst+".tmp", fsyncs, then renames to dst.
+// WriteFileAtomic は r を dst+".tmp" に書き、fsync してから dst にリネームする。
 func WriteFileAtomic(dst string, r io.Reader, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("atomic write %s: %w", dst, err)
@@ -46,7 +46,7 @@ func WriteFileAtomic(dst string, r io.Reader, perm os.FileMode) error {
 	return nil
 }
 
-// WriteJSONAtomic JSON-encodes v and writes it atomically (manifest / meta files).
+// WriteJSONAtomic は v を JSON エンコードしてアトミックに書き出す (manifest / meta ファイル)。
 func WriteJSONAtomic(dst string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -55,8 +55,8 @@ func WriteJSONAtomic(dst string, v any) error {
 	return WriteFileAtomic(dst, strings.NewReader(string(data)+"\n"), 0o644)
 }
 
-// CopyFileAtomic copies src to dst with AtomicWrite (fan-out / replay / DLQ
-// isolation). The source file permissions are preserved.
+// CopyFileAtomic は src を AtomicWrite で dst にコピーする (fan-out / replay /
+// DLQ 隔離)。ソースファイルのパーミッションは保持される。
 func CopyFileAtomic(src, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
@@ -70,8 +70,8 @@ func CopyFileAtomic(src, dst string) error {
 	return WriteFileAtomic(dst, f, info.Mode().Perm())
 }
 
-// CleanupTempFiles removes *.tmp files directly under dir, left over from an
-// interrupted write. A missing directory is not an error (idempotent restart).
+// CleanupTempFiles は中断された書き込みが残した dir 直下の *.tmp ファイルを
+// 削除する。ディレクトリが無いことはエラーではない (冪等な再起動)。
 func CleanupTempFiles(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -91,7 +91,7 @@ func CleanupTempFiles(dir string) error {
 	return nil
 }
 
-// readJSON decodes the JSON file at path into v.
+// readJSON は path の JSON ファイルを v にデコードする。
 func readJSON(path string, v any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

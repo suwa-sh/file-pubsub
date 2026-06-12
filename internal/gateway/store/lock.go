@@ -9,32 +9,32 @@ import (
 	"time"
 )
 
-// ErrAlreadyLocked means a live process holds the lock: the caller must treat
-// it as a duplicate start and exit with code 3 (SR-006).
+// ErrAlreadyLocked は生存中のプロセスがロックを保持していることを表す: 呼び出し側
+// は二重起動として扱い、exit code 3 で終了しなければならない (SR-006)。
 var ErrAlreadyLocked = errors.New("lock held by a live process")
 
-// lockRecord is the content of the data_dir/lock file: holder process info and
-// acquisition time for stale detection (E-011).
+// lockRecord は data_dir/lock ファイルの内容: stale 検出のための保持者プロセス
+// 情報と取得時刻 (E-011)。
 type lockRecord struct {
 	PID        int       `json:"pid"`
 	AcquiredAt time.Time `json:"acquired_at"`
 }
 
-// LockManager acquires and releases the duplicate-start prevention lock with
-// stale recovery by process liveness check (SR-006, LR-002).
+// LockManager は二重起動防止ロックの取得・解放を行う。プロセス生存確認による
+// stale 回収つき (SR-006, LR-002)。
 type LockManager struct {
 	path  string
 	alive func(pid int) bool
 }
 
-// NewLockManager manages dataDir/lock.
+// NewLockManager は dataDir/lock を管理するマネージャを返す。
 func NewLockManager(dataDir string) *LockManager {
 	return &LockManager{path: filepath.Join(dataDir, "lock"), alive: processAlive}
 }
 
-// Acquire takes the lock for pid. A lock held by a dead process is stale and
-// is safely recovered (removed and re-acquired); a lock held by a live
-// process returns ErrAlreadyLocked without touching the existing lock file.
+// Acquire は pid のためにロックを取得する。死んだプロセスが保持するロックは
+// stale として安全に回収する (削除して再取得)。生存中のプロセスが保持するロックは、
+// 既存のロックファイルに触れずに ErrAlreadyLocked を返す。
 func (l *LockManager) Acquire(pid int, now time.Time) error {
 	for attempt := 0; attempt < 2; attempt++ {
 		err := l.create(pid, now)
@@ -48,15 +48,15 @@ func (l *LockManager) Acquire(pid int, now time.Time) error {
 		var rec lockRecord
 		if readErr := readJSON(l.path, &rec); readErr != nil {
 			if os.IsNotExist(readErr) {
-				continue // holder released between create and read; retry
+				continue // create と read の間に保持者が解放した場合: リトライ
 			}
-			// Unreadable lock content: do not steal a possibly live lock.
+			// ロック内容が読めない場合: 生存中かもしれないロックを奪わない。
 			return fmt.Errorf("acquire lock: unreadable lock file %s: %w", l.path, readErr)
 		}
 		if l.alive(rec.PID) {
 			return fmt.Errorf("acquire lock: held by pid %d since %s: %w", rec.PID, rec.AcquiredAt.Format(time.RFC3339), ErrAlreadyLocked)
 		}
-		// Stale lock: holder is dead, recover safely.
+		// stale ロック: 保持者は死んでいるので安全に回収する。
 		if rmErr := os.Remove(l.path); rmErr != nil && !os.IsNotExist(rmErr) {
 			return fmt.Errorf("acquire lock: recover stale lock: %w", rmErr)
 		}
@@ -64,7 +64,7 @@ func (l *LockManager) Acquire(pid int, now time.Time) error {
 	return fmt.Errorf("acquire lock: contention on %s: %w", l.path, ErrAlreadyLocked)
 }
 
-// create writes the lock file exclusively so two starters cannot both win.
+// create はロックファイルを排他的に書き、2 つの起動が同時に勝てないようにする。
 func (l *LockManager) create(pid int, now time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
 		return err
@@ -87,8 +87,8 @@ func (l *LockManager) create(pid int, now time.Time) error {
 	return f.Close()
 }
 
-// Release removes the lock file (graceful shutdown). A missing file is not an
-// error.
+// Release はロックファイルを削除する (graceful shutdown)。ファイルが無いことは
+// エラーではない。
 func (l *LockManager) Release() error {
 	if err := os.Remove(l.path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("release lock: %w", err)
@@ -96,7 +96,7 @@ func (l *LockManager) Release() error {
 	return nil
 }
 
-// Holder returns the recorded holder pid and acquisition time.
+// Holder は記録された保持者の pid と取得時刻を返す。
 func (l *LockManager) Holder() (pid int, acquiredAt time.Time, err error) {
 	var rec lockRecord
 	if err := readJSON(l.path, &rec); err != nil {
@@ -105,7 +105,7 @@ func (l *LockManager) Holder() (pid int, acquiredAt time.Time, err error) {
 	return rec.PID, rec.AcquiredAt, nil
 }
 
-// processAlive reports whether pid refers to a live process (signal 0 probe).
+// processAlive は pid が生存中のプロセスを指すかどうかを返す (signal 0 による確認)。
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false

@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// DLQMeta is dlq/{topic}/{message_id}.meta.json (schemas.dlq_meta_json): the
-// basis for the operator's decision to replay or discard.
+// DLQMeta は dlq/{topic}/{message_id}.meta.json (schemas.dlq_meta_json) を表す:
+// オペレータが replay するか破棄するかを判断する根拠となる。
 type DLQMeta struct {
 	MessageID       string    `json:"message_id"`
 	Topic           string    `json:"topic"`
@@ -21,18 +21,18 @@ type DLQMeta struct {
 
 const dlqMetaSuffix = ".meta.json"
 
-// DLQStore manages dlq/{topic}/{message_id} (+ .meta.json): messages isolated
-// after exceeding the retry limit (SR-004). No automatic deletion.
+// DLQStore は dlq/{topic}/{message_id} (+ .meta.json) を管理する: リトライ上限を
+// 超えて隔離されたメッセージ (SR-004)。自動削除はしない。
 type DLQStore struct {
 	dir string
 }
 
-// NewDLQStore roots the store at dataDir/dlq.
+// NewDLQStore は dataDir/dlq を起点とするストアを返す。
 func NewDLQStore(dataDir string) *DLQStore {
 	return &DLQStore{dir: filepath.Join(dataDir, "dlq")}
 }
 
-// FilePath returns dlq/{topic}/{message_id}.
+// FilePath は dlq/{topic}/{message_id} を返す。
 func (s *DLQStore) FilePath(topic, messageID string) string {
 	return filepath.Join(s.dir, topic, messageID)
 }
@@ -41,9 +41,8 @@ func (s *DLQStore) metaPath(topic, messageID string) string {
 	return s.FilePath(topic, messageID) + dlqMetaSuffix
 }
 
-// Isolate copies the archive file srcPath into the DLQ and writes its meta
-// with AtomicWrite. Re-running overwrites the same paths (idempotent, no
-// double isolation).
+// Isolate はアーカイブファイル srcPath を DLQ にコピーし、その meta を AtomicWrite
+// で書き出す。再実行は同じパスを上書きする (冪等、二重隔離なし)。
 func (s *DLQStore) Isolate(srcPath string, meta DLQMeta) error {
 	if meta.MessageID == "" || meta.Topic == "" {
 		return fmt.Errorf("isolate to dlq: message_id and topic are required")
@@ -57,7 +56,7 @@ func (s *DLQStore) Isolate(srcPath string, meta DLQMeta) error {
 	return nil
 }
 
-// ReadMeta loads the isolation metadata of one DLQ message.
+// ReadMeta は DLQ メッセージ 1 件の隔離メタデータを読み込む。
 func (s *DLQStore) ReadMeta(topic, messageID string) (*DLQMeta, error) {
 	var meta DLQMeta
 	if err := readJSON(s.metaPath(topic, messageID), &meta); err != nil {
@@ -66,8 +65,7 @@ func (s *DLQStore) ReadMeta(topic, messageID string) (*DLQMeta, error) {
 	return &meta, nil
 }
 
-// List returns the isolation metadata of every DLQ message in a topic, sorted
-// by message_id ascending.
+// List は topic 内の全 DLQ メッセージの隔離メタデータを message_id 昇順で返す。
 func (s *DLQStore) List(topic string) ([]DLQMeta, error) {
 	entries, err := os.ReadDir(filepath.Join(s.dir, topic))
 	if err != nil {

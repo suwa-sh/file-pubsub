@@ -8,12 +8,14 @@ import (
 	"time"
 )
 
-func TestProcessedStore_MarkAndCheck(t *testing.T) {
+func TestProcessedStore_MarkProcessedした場合_記録済みになり未記録の名前は未処理のままなこと(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewProcessedStore(dataDir)
 	at := time.Date(2026, 6, 12, 9, 30, 1, 0, time.UTC)
 	mtime := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
 
+	// Act & Assert (未記録)
 	ok, err := s.IsProcessed("customers", "customers_20260612.csv", mtime, 42)
 	if err != nil {
 		t.Fatal(err)
@@ -22,9 +24,12 @@ func TestProcessedStore_MarkAndCheck(t *testing.T) {
 		t.Error("unrecorded file must be unprocessed")
 	}
 
+	// Act (Mark)
 	if err := s.MarkProcessed("customers", "customers_20260612.csv", mtime, 42, at); err != nil {
 		t.Fatalf("MarkProcessed: %v", err)
 	}
+
+	// Assert (記録後)
 	ok, err = s.IsProcessed("customers", "customers_20260612.csv", mtime, 42)
 	if err != nil {
 		t.Fatal(err)
@@ -32,27 +37,26 @@ func TestProcessedStore_MarkAndCheck(t *testing.T) {
 	if !ok {
 		t.Error("recorded file must be processed")
 	}
-
-	// Other identifier in the same topic stays unprocessed.
+	// 同じ topic でも別の識別子は未処理のまま
 	ok, _ = s.IsProcessed("customers", "customers_20260613.csv", mtime, 42)
 	if ok {
 		t.Error("different name must be unprocessed")
 	}
 }
 
-// TestProcessedStore_KeyIncludesMtimeAndSize guards the processed key: the
-// same file name with a different mtime or size is a different source file
-// state and must not be reported as processed.
-func TestProcessedStore_KeyIncludesMtimeAndSize(t *testing.T) {
+// 処理済みキーを保証するテスト: 同名でも mtime またはサイズが異なるものは
+// 別のソースファイル状態であり、処理済みと報告してはならない。
+func TestIsProcessed_同名でmtimeかサイズが異なる場合_未処理と判定されること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewProcessedStore(dataDir)
 	at := time.Now().UTC()
 	mtime := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
-
 	if err := s.MarkProcessed("customers", "a.csv", mtime, 42, at); err != nil {
 		t.Fatal(err)
 	}
 
+	// Act & Assert
 	if ok, _ := s.IsProcessed("customers", "a.csv", mtime.Add(time.Second), 42); ok {
 		t.Error("same name with a different mtime must be unprocessed")
 	}
@@ -64,12 +68,14 @@ func TestProcessedStore_KeyIncludesMtimeAndSize(t *testing.T) {
 	}
 }
 
-func TestProcessedStore_MarkIsIdempotentAndAppends(t *testing.T) {
+func TestMarkProcessed_同じ状態を再markした場合_冪等で変化した状態だけ追記されること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewProcessedStore(dataDir)
 	at := time.Now().UTC()
 	mtime := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
 
+	// Act
 	if err := s.MarkProcessed("customers", "a.csv", mtime, 42, at); err != nil {
 		t.Fatal(err)
 	}
@@ -79,11 +85,12 @@ func TestProcessedStore_MarkIsIdempotentAndAppends(t *testing.T) {
 	if err := s.MarkProcessed("customers", "b.csv", mtime, 42, at); err != nil {
 		t.Fatal(err)
 	}
-	// A changed file state of the same name is a new record, not a duplicate.
+	// 同名でも状態が変化したファイルは重複ではなく新規記録
 	if err := s.MarkProcessed("customers", "a.csv", mtime.Add(time.Minute), 43, at); err != nil {
 		t.Fatal(err)
 	}
 
+	// Assert
 	entries, err := s.Entries("customers")
 	if err != nil {
 		t.Fatal(err)
@@ -93,13 +100,18 @@ func TestProcessedStore_MarkIsIdempotentAndAppends(t *testing.T) {
 	}
 }
 
-func TestProcessedStore_FileFollowsSchema(t *testing.T) {
+func TestProcessedStore_MarkProcessedした場合_ファイルがスキーマに従うこと(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	s := NewProcessedStore(dataDir)
 	mtime := time.Date(2026, 6, 12, 9, 0, 0, 123, time.UTC)
+
+	// Act
 	if err := s.MarkProcessed("customers", "a.csv", mtime, 42, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+
+	// Assert
 	raw, err := os.ReadFile(filepath.Join(dataDir, "processed", "customers.json"))
 	if err != nil {
 		t.Fatal(err)

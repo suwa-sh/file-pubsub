@@ -9,18 +9,19 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-func TestRetryRecoversFailedDelivery(t *testing.T) {
+func TestRetry_配信先が回復した場合_アーカイブから再配信されdeliveredになること(t *testing.T) {
+	// Arrange: next の失敗後、retry パスの前に配信先を回復させる
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
 	e.p.Fanout(context.Background())
-
-	// The destination recovers before the retry pass.
 	fixed := filepath.Join(t.TempDir(), "next")
 	e.setSubscriptionDir("next", fixed)
 
+	// Act
 	e.p.Retry(context.Background())
 
+	// Assert
 	if !fileExists(t, e.subFile("next", "orders_1.csv")) {
 		t.Fatal("next must be redelivered from the archive")
 	}
@@ -36,13 +37,14 @@ func TestRetryRecoversFailedDelivery(t *testing.T) {
 	}
 }
 
-func TestRetryCountsFailuresAndIsolatesToDLQ(t *testing.T) {
-	e := newEnv(t, config.HandlingDelete) // RetryMaxCount = 2
+func TestRetry_失敗が上限を超えた場合_DLQに隔離され自動再配信から除外されること(t *testing.T) {
+	// Arrange (RetryMaxCount = 2)
+	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
 	e.p.Fanout(context.Background())
 
-	// Two failing retries reach the limit.
+	// Act & Assert: 失敗するリトライ 2 回で上限に達する
 	for want := 1; want <= 2; want++ {
 		e.p.Retry(context.Background())
 		got, err := e.p.Manifests.Get(m.MessageID)
@@ -57,9 +59,10 @@ func TestRetryCountsFailuresAndIsolatesToDLQ(t *testing.T) {
 		}
 	}
 
-	// The next pass exceeds the limit: isolate to DLQ.
+	// Act: 次のパスで上限を超える
 	e.p.Retry(context.Background())
 
+	// Assert: DLQ に隔離される
 	if !fileExists(t, e.p.DLQ.FilePath("orders", m.MessageID)) {
 		t.Fatal("dlq file must exist")
 	}
@@ -84,27 +87,29 @@ func TestRetryCountsFailuresAndIsolatesToDLQ(t *testing.T) {
 		t.Fatalf("current = %s, want delivered (untouched)", s.Status)
 	}
 
-	// Isolated messages are excluded from further automatic processing.
+	// Act: 配信先が回復しても、隔離済みメッセージは自動処理の対象外
 	fixed := filepath.Join(t.TempDir(), "next")
 	e.setSubscriptionDir("next", fixed)
 	e.p.Retry(context.Background())
 	e.p.Fanout(context.Background())
+
+	// Assert
 	if fileExists(t, e.subFile("next", "orders_1.csv")) {
 		t.Fatal("a dlq-isolated subscription must not be redelivered automatically")
 	}
 }
 
-// TestRetryResumesRetryingToDelivered guards crash recovery: a manifest left
-// in retrying (crash right after the failed → retrying write) must be picked
-// up by the next Retry pass and driven to delivered once the destination
-// works again, instead of being stuck forever.
-func TestRetryResumesRetryingToDelivered(t *testing.T) {
+// TestRetry_retrying状態で中断していた場合_再開後にdeliveredまで到達すること は
+// クラッシュ復旧を守るテスト: failed → retrying の書き込み直後にクラッシュして
+// retrying のまま残ったマニフェストは、次の Retry パスで拾われ、配信先が回復
+// していれば delivered まで進まなければならない (永遠に固まってはならない)。
+func TestRetry_retrying状態で中断していた場合_再開後にdeliveredまで到達すること(t *testing.T) {
+	// Arrange: クラッシュの窓を再現する (status を retrying にしただけで終わる)
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
 	e.p.Fanout(context.Background())
 
-	// Simulate the crash window: status written as retrying, nothing after.
 	stuck, err := e.p.Manifests.Get(m.MessageID)
 	if err != nil {
 		t.Fatal(err)
@@ -113,10 +118,12 @@ func TestRetryResumesRetryingToDelivered(t *testing.T) {
 	if err := e.p.Manifests.Put(stuck); err != nil {
 		t.Fatal(err)
 	}
-
 	e.setSubscriptionDir("next", filepath.Join(t.TempDir(), "next"))
+
+	// Act
 	e.p.Retry(context.Background())
 
+	// Assert
 	if !fileExists(t, e.subFile("next", "orders_1.csv")) {
 		t.Fatal("the retrying message must be redelivered after restart")
 	}
@@ -129,10 +136,12 @@ func TestRetryResumesRetryingToDelivered(t *testing.T) {
 	}
 }
 
-// TestRetryResumesRetryingToDLQ: a manifest left in retrying with the retry
-// limit already exhausted must proceed to DLQ isolation on the next pass.
-func TestRetryResumesRetryingToDLQ(t *testing.T) {
-	e := newEnv(t, config.HandlingDelete) // RetryMaxCount = 2
+// TestRetry_retrying状態で上限超過のまま中断していた場合_再開後にDLQへ隔離されること:
+// retry 上限を使い切った状態で retrying のまま残ったマニフェストは、次のパスで
+// DLQ 隔離まで進まなければならない。
+func TestRetry_retrying状態で上限超過のまま中断していた場合_再開後にDLQへ隔離されること(t *testing.T) {
+	// Arrange (RetryMaxCount = 2): クラッシュ前に上限を使い切った状態を再現する
+	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
 	e.p.Fanout(context.Background())
@@ -142,13 +151,15 @@ func TestRetryResumesRetryingToDLQ(t *testing.T) {
 		t.Fatal(err)
 	}
 	stuck.Status = domain.StatusRetrying
-	stuck.RetryCount = 2 // limit exhausted before the crash
+	stuck.RetryCount = 2 // クラッシュ前に上限を使い切っている
 	if err := e.p.Manifests.Put(stuck); err != nil {
 		t.Fatal(err)
 	}
 
+	// Act
 	e.p.Retry(context.Background())
 
+	// Assert
 	if !fileExists(t, e.p.DLQ.FilePath("orders", m.MessageID)) {
 		t.Fatal("the retrying message must be isolated to the DLQ after restart")
 	}

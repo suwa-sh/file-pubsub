@@ -1,8 +1,7 @@
 package domain
 
-// ShouldIsolate reports whether a failed delivery has exhausted its retries
-// and must be isolated to DLQ (SR-004): retryCount >= retryMaxCount.
-// Within the limit the delivery is retried.
+// ShouldIsolate は配信失敗がリトライ上限に達し、DLQ への隔離が必要かどうかを返す
+// (SR-004): retryCount >= retryMaxCount。上限内であれば配信はリトライされる。
 func ShouldIsolate(retryCount, retryMaxCount int) bool {
 	return retryCount >= retryMaxCount
 }

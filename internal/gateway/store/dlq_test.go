@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-func TestDLQStore_IsolateAndRead(t *testing.T) {
+func TestDLQStore_Isolateした場合_ファイルとmetaが読み戻せること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	src := filepath.Join(dataDir, "archive-file")
 	if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
@@ -22,7 +23,11 @@ func TestDLQStore_IsolateAndRead(t *testing.T) {
 		IsolatedAt:      time.Date(2026, 6, 11, 22, 31, 10, 0, time.UTC),
 	}
 
-	if err := s.Isolate(src, meta); err != nil {
+	// Act
+	err := s.Isolate(src, meta)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("Isolate: %v", err)
 	}
 	data, err := os.ReadFile(s.FilePath("invoices", meta.MessageID))
@@ -41,7 +46,8 @@ func TestDLQStore_IsolateAndRead(t *testing.T) {
 	}
 }
 
-func TestDLQStore_IsolateIsIdempotent(t *testing.T) {
+func TestDLQStore_Isolate_同じメッセージを再隔離した場合_冪等に上書きされ二重隔離されないこと(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	src := filepath.Join(dataDir, "archive-file")
 	if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
@@ -52,7 +58,12 @@ func TestDLQStore_IsolateIsIdempotent(t *testing.T) {
 	if err := s.Isolate(src, meta); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Isolate(src, meta); err != nil {
+
+	// Act
+	err := s.Isolate(src, meta)
+
+	// Assert
+	if err != nil {
 		t.Fatalf("re-isolation must overwrite idempotently: %v", err)
 	}
 	metas, err := s.List("invoices")
@@ -64,7 +75,8 @@ func TestDLQStore_IsolateIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDLQStore_List(t *testing.T) {
+func TestDLQStore_List_複数メッセージがある場合_messageID昇順で返ること(t *testing.T) {
+	// Arrange
 	dataDir := t.TempDir()
 	src := filepath.Join(dataDir, "archive-file")
 	if err := os.WriteFile(src, []byte("p"), 0o644); err != nil {
@@ -76,7 +88,11 @@ func TestDLQStore_List(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+
+	// Act
 	metas, err := s.List("invoices")
+
+	// Assert
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,16 +101,24 @@ func TestDLQStore_List(t *testing.T) {
 	}
 }
 
-func TestDLQStore_ListMissingTopic(t *testing.T) {
+func TestDLQStore_List_topicが存在しない場合_空で返ること(t *testing.T) {
+	// Arrange
 	s := NewDLQStore(t.TempDir())
+
+	// Act
 	metas, err := s.List("nope")
+
+	// Assert
 	if err != nil || metas != nil {
 		t.Errorf("missing topic: got %v, %v", metas, err)
 	}
 }
 
-func TestDLQStore_IsolateRequiresIdentity(t *testing.T) {
+func TestDLQStore_Isolate_messageIDとtopicが空の場合_エラーになること(t *testing.T) {
+	// Arrange
 	s := NewDLQStore(t.TempDir())
+
+	// Act & Assert
 	if err := s.Isolate("src", DLQMeta{}); err == nil {
 		t.Error("missing message_id/topic must fail")
 	}

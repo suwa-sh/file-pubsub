@@ -7,18 +7,16 @@ import (
 	"time"
 )
 
-// processedFile is processed/{topic}.json (schemas.processed_json): the
-// append-only record preventing re-collection when the source keeps original
-// files (copy handling, SP-004).
+// processedFile は processed/{topic}.json (schemas.processed_json) を表す:
+// ソースが元ファイルを残す場合 (copy 扱い, SP-004) の再収集を防ぐ追記専用記録。
 type processedFile struct {
 	Topic   string           `json:"topic"`
 	Entries []ProcessedEntry `json:"entries"`
 }
 
-// ProcessedEntry is one element of processed_json.entries. A source file is
-// identified by name + mtime (UnixNano) + size, so a same-name re-output with
-// different content (mtime or size changed) is re-collected instead of being
-// skipped forever.
+// ProcessedEntry は processed_json.entries の要素 1 つ。ソースファイルは
+// 名前 + mtime (UnixNano) + サイズで識別するため、同名でも内容が変わった再出力
+// (mtime またはサイズが変化) は永久にスキップされず再収集される。
 type ProcessedEntry struct {
 	SourceFileIdentifier string    `json:"source_file_identifier"`
 	ModTimeUnixNano      int64     `json:"mtime_unixnano"`
@@ -26,17 +24,17 @@ type ProcessedEntry struct {
 	ProcessedAt          time.Time `json:"processed_at"`
 }
 
-// matches reports whether the entry records exactly this source file state.
+// matches はこのエントリがちょうどこのソースファイル状態を記録しているかどうかを返す。
 func (e ProcessedEntry) matches(name string, modTime time.Time, size int64) bool {
 	return e.SourceFileIdentifier == name && e.ModTimeUnixNano == modTime.UnixNano() && e.Size == size
 }
 
-// ProcessedStore reads and writes processed/{topic}.json.
+// ProcessedStore は processed/{topic}.json の読み書きを行う。
 type ProcessedStore struct {
 	dir string
 }
 
-// NewProcessedStore roots the store at dataDir/processed.
+// NewProcessedStore は dataDir/processed を起点とするストアを返す。
 func NewProcessedStore(dataDir string) *ProcessedStore {
 	return &ProcessedStore{dir: filepath.Join(dataDir, "processed")}
 }
@@ -56,8 +54,8 @@ func (s *ProcessedStore) load(topic string) (*processedFile, error) {
 	return &f, nil
 }
 
-// IsProcessed reports whether this exact source file state (name + mtime +
-// size) is already recorded.
+// IsProcessed はちょうどこのソースファイル状態 (名前 + mtime + サイズ) が記録済み
+// かどうかを返す。
 func (s *ProcessedStore) IsProcessed(topic, name string, modTime time.Time, size int64) (bool, error) {
 	f, err := s.load(topic)
 	if err != nil {
@@ -71,9 +69,9 @@ func (s *ProcessedStore) IsProcessed(topic, name string, modTime time.Time, size
 	return false, nil
 }
 
-// MarkProcessed appends a processed record with AtomicWrite. Until the record
-// is persisted the file stays unprocessed (safe side: re-collection candidate).
-// Marking an already recorded file state is a no-op (idempotent).
+// MarkProcessed は処理済み記録を AtomicWrite で追記する。記録が永続化されるまで
+// ファイルは未処理のまま (安全側: 再収集候補)。記録済みのファイル状態への mark は
+// no-op (冪等)。
 func (s *ProcessedStore) MarkProcessed(topic, name string, modTime time.Time, size int64, at time.Time) error {
 	f, err := s.load(topic)
 	if err != nil {
@@ -96,7 +94,7 @@ func (s *ProcessedStore) MarkProcessed(topic, name string, modTime time.Time, si
 	return nil
 }
 
-// Entries returns all processed records of the topic.
+// Entries は topic のすべての処理済み記録を返す。
 func (s *ProcessedStore) Entries(topic string) ([]ProcessedEntry, error) {
 	f, err := s.load(topic)
 	if err != nil {

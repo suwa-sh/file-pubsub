@@ -9,12 +9,15 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/domain"
 )
 
-func TestFanoutDeliversAllSubscriptions(t *testing.T) {
+func TestFanout_archivedメッセージがある場合_全サブスクリプションに配信されること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 
+	// Act
 	e.p.Fanout(context.Background())
 
+	// Assert
 	for _, sub := range []string{"current", "next"} {
 		path := e.subFile(sub, "orders_1.csv")
 		if !fileExists(t, path) {
@@ -45,13 +48,16 @@ func TestFanoutDeliversAllSubscriptions(t *testing.T) {
 	}
 }
 
-func TestFanoutPartialFailureContinues(t *testing.T) {
+func TestFanout_一部のサブスクリプションが失敗した場合_他への配信は継続しfailedが記録されること(t *testing.T) {
+	// Arrange
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
 	e.breakSubscription("next")
 
+	// Act
 	e.p.Fanout(context.Background())
 
+	// Assert
 	if !fileExists(t, e.subFile("current", "orders_1.csv")) {
 		t.Fatal("current must be delivered despite the next failure")
 	}
@@ -74,18 +80,21 @@ func TestFanoutPartialFailureContinues(t *testing.T) {
 	}
 }
 
-func TestFanoutIdempotentNoDoubleDelivery(t *testing.T) {
+func TestFanout_配信済みメッセージを再実行した場合_再配置されないこと(t *testing.T) {
+	// Arrange: 配信後、コンシューマーがファイルを引き取った状態にする
 	e := newEnv(t, config.HandlingDelete)
 	e.seedArchived("orders_1.csv", "payload")
 	e.p.Fanout(context.Background())
-
-	// The consumer takes the files away; a re-run must not re-place them.
 	for _, sub := range []string{"current", "next"} {
 		if err := os.Remove(e.subFile(sub, "orders_1.csv")); err != nil {
 			t.Fatal(err)
 		}
 	}
+
+	// Act
 	e.p.Fanout(context.Background())
+
+	// Assert
 	for _, sub := range []string{"current", "next"} {
 		if fileExists(t, e.subFile(sub, "orders_1.csv")) {
 			t.Fatalf("%s must not be redelivered (already delivered)", sub)
@@ -93,11 +102,10 @@ func TestFanoutIdempotentNoDoubleDelivery(t *testing.T) {
 	}
 }
 
-func TestFanoutResumeDeliversOnlyPending(t *testing.T) {
+func TestFanout_delivering状態で中断していた場合_未配信のサブスクリプションのみ配信されること(t *testing.T) {
+	// Arrange: 中断されたファンアウトを再現する (delivering で current は配信済み)
 	e := newEnv(t, config.HandlingDelete)
 	m := e.seedArchived("orders_1.csv", "payload")
-
-	// Interrupted fan-out: delivering with current already delivered.
 	m.Status = domain.StatusDelivering
 	now := e.clock.Now()
 	m.SetSubscriptionState("current", domain.SubscriptionDelivered, &now, "")
@@ -105,8 +113,10 @@ func TestFanoutResumeDeliversOnlyPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Act
 	e.p.Fanout(context.Background())
 
+	// Assert
 	if fileExists(t, e.subFile("current", "orders_1.csv")) {
 		t.Fatal("current was already delivered and must not be re-placed")
 	}
