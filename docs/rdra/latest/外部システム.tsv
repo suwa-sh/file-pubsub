@@ -1,0 +1,6 @@
+外部システム群	外部システム	役割
+ファイル提供元	Producerシステム	レガシーファイルIFのファイルをニアリアルタイムで出力し続ける連携元システム。変更せずに済むことが前提で、FTP領域等へファイルを出力する
+ファイル提供元	リモートファイル領域	Producerが出力したファイルが置かれるFTP/SFTP/SCPサーバ上の領域。file-pubsubがCollectでファイルを収集(GET後DELETEまたはcopy)する収集元
+ファイル受信先	Consumerシステム(Current)	現行のConsumerシステム。Subscriptionディレクトリ(subscriptions/current)から従来手段(FTP GET等)で自分のペースでファイルを取得・削除して取り込む
+ファイル受信先	Consumerシステム(Next)	更改後の新Consumerシステム。Subscriptionディレクトリ(subscriptions/next)からファイルを取得・取り込み、Currentと並行稼働する
+運用監視	監視基盤	Prometheus/Grafana等の外部監視基盤。file-pubsubが公開する/healthzで死活監視し、/metricsのTopic別メトリクスでしきい値判定・アラート発報を行う

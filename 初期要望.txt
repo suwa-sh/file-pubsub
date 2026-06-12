@@ -1,0 +1,87 @@
+file-pubsub 初期要望
+
+# 背景と課題
+
+Producer がニアリアルタイムにファイルを出力し、Consumer が FTP GET → DELETE で取り込むレガシーファイル IF がある。
+GET+DELETE は先に取得した側がファイルを消すため、Consumer 更改時に Current/Next の並行稼働ができない。
+他のファイル IF はファイル転送基盤で同報配信できており、FTP GET 型だけが例外になっている。Producer は変更したくない。
+
+# 目的
+
+FTP GET/DELETE 型のレガシーファイル IF を、Pub/Sub 風の配信モデル(Topic / Subscription / Archive / Fan-out)へ
+変換する軽量ブリッジ file-pubsub を OSS(MIT ライセンス)として実装する。
+
+# 基本モデル
+
+- Topic: Producer が出力する論理的なファイル種別(orders / customers / invoices 等)
+- Subscription: Consumer ごとの配送先(current / next / test 等)
+- Archive: 収集した全ファイルを Topic 別に必ず保存(再送・監査・障害復旧・差分比較の基盤)
+- Fan-out: Archive から各 Subscription のディレクトリへ複製
+- Manifest: message_id / topic / Subscription 別配送状態の履歴
+
+# 機能要件
+
+1. 収集(Collect): リモートサーバ(FTP / SFTP / SCP)およびローカルディレクトリからファイルを取得する。
+   収集ソースは Topic ごとに設定で切り替え、後段(Archive / Fan-out / Manifest)はソース種別に依存しない。
+2. 収集後の元ファイル: GET 後 DELETE(回収)が既定。Topic 設定で「残す(copy)」も選択でき、
+   copy 時は処理済み管理で重複収集を防ぐ。
+3. 書き込み途中ファイルの保護(収集側): Producer が書き込み中のファイルを収集しない
+   (サイズ/更新時刻の安定待ち、除外パターン)。リモート GET 中も一時名でダウンロードし完了後 rename して、
+   Archive に途中状態を残さない。
+4. 常駐デーモン: ポーリング間隔を設定できる常駐プロセスとして動作。二重起動は Lock で防止し、
+   異常終了後の stale lock からは安全に回復する。graceful shutdown(処理中メッセージを完了してから停止)。
+5. Fan-out: 全 Subscription へ複製する。Subscription ごとに配送が独立しており、
+   一方の Consumer の取り込み・削除が他方に影響しない(取り込みタイミングの差: 即時/夜間 を吸収)。
+6. Atomic Write(配信側): 一時名(file.csv.tmp)で書き込んでから正式名(file.csv)へ rename し、
+   Consumer が途中状態のファイルを読まない。
+7. Manifest: メッセージ(収集ファイル)ごとに message_id / topic / 各 Subscription の配送状態
+   (delivered / failed / dlq)を記録する。配送状況を確認する手段(status コマンド)を持つ。
+8. 冪等性: 同名ファイルの再出力は新しいメッセージとして扱う(上書きで履歴を失わない)。
+   message_id は収集時刻 + Topic + 元ファイル名から採番する。
+   デーモンの再起動・処理中断後の再開で二重配信しない。
+9. Replay: Archive から Topic・期間(またはメッセージ指定)・宛先 Subscription を指定して再送する。
+   Replay も Manifest に記録する。
+10. リトライと DLQ: 配信失敗はリトライし、規定回数を超えたら DLQ へ隔離して Manifest に記録する。
+11. Archive retention: 保持期間を設定でき、超過分を安全に削除する(無限に溜めない)。
+12. メトリクス公開(初期スコープ): デーモンが HTTP で Prometheus 形式の /metrics と死活監視用の /healthz を公開する。
+    Topic ごとの異常検知に使える粒度(topic 別の最終収集時刻 / 処理件数 / 配信失敗数 / DLQ 件数 / 滞留数 等)を出す。
+    しきい値判定・アラート発報は Prometheus / Grafana 等の外部監視基盤の責務とする(file-pubsub はメトリクス提供まで)。
+
+# 非機能・配布
+
+- Go 実装のシングルバイナリ(現場サーバにバイナリ 1 個で導入)。Linux 主対象 + macOS 動作。
+- Docker 対応: コンテナイメージを提供し、Windows の開発 PC(Docker Desktop)でも動作確認できる。
+  docker compose で一式(file-pubsub + 収集元 FTP/SFTP サーバの例)を起動できる動作確認環境を同梱する。
+- 設定は単一 YAML(topics / 収集ソース / subscriptions / ポーリング間隔 / retention / リトライ / メトリクスポート)。
+- 認証情報(FTP/SFTP/SCP のパスワード・鍵): YAML への平文記述も許容しつつ、環境変数参照(${ENV_VAR})と
+  鍵ファイルパス指定を推奨として README で案内する。
+- 構造化ログ。運用者が障害調査できる粒度。
+- Producer・Consumer とも改修不要(Consumer は従来どおりファイルを GET するだけ)。
+- メッセージの順序保証はしない。Fan-out 配置はファイル名昇順で処理するが、取り込み順序は Consumer の責任
+  (従来の FTP GET と同じ)。
+- 単一インスタンス前提(Lock で多重防止)。冗長化(HA)はスコープ外。
+
+# 配信先のスコープ
+
+Subscription はファイルサーバ(file-pubsub 稼働サーバ)上のローカルディレクトリのみ。
+Consumer が従来手段(FTP GET 等)で取りに来る。
+
+# 想定ユースケース
+
+1. システム更改: Current/Next の並行稼働
+2. Consumer 追加: 会計 / DWH / BI / AI への展開
+3. 再送: 先月分を Archive から再投入(Replay)
+4. 処理速度差: Current は即時、DWH は夜間。独立配送で吸収
+5. Messaging 移行の橋渡し: 将来 Kafka / RabbitMQ / Google Pub/Sub へ移行する際も
+   Topic / Subscription / Replay / DLQ の概念が一致。先にファイルで実現しておく
+
+# 対象外(将来も対応しない)
+
+- S3 / SMB 収集ソース
+- リモート push 配信(Subscription から FTP/SFTP PUT で Consumer 側サーバへ送り込む方式)
+
+# 将来拡張(今回スコープ外)
+
+- Web UI(配送状況の可視化)
+- リモートから PUT されるパターン(file-pubsub が受信エンドポイントになる収集方式)
+- 重複検出(content hash による同一内容ファイルの検知)

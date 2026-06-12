@@ -1,0 +1,8 @@
+コンテキスト	バリエーション	値	説明
+配信構成管理	収集ソース種別	FTP、SFTP、SCP、ローカルディレクトリ	Producerが出力したファイルの収集元の種別。Topicごとに設定で切り替えられ、後段(Archive/Fan-out/Manifest)はソース種別に依存しない
+配信構成管理	元ファイル処理方式	回収(GET後DELETE)、残す(copy)	収集後の元ファイルの扱い。既定はGET後DELETEで回収し、copy選択時は処理済み管理で同じファイルの重複収集を防ぐ
+配信構成管理	Subscription種別	current、next、test	Consumerごとの配送先の種別。Consumer更改時のCurrent/Next並行稼働や検証用(test)など、用途に応じてSubscriptionを追加できる
+配信構成管理	Consumer取り込みタイミング	即時取り込み、夜間バッチ	ConsumerがSubscriptionディレクトリからファイルを取得・取り込むタイミングの区分。Subscriptionごとに配送が独立しており、タイミングの差を吸収する
+メッセージ配送管理	配信方式	通常配信(Fan-out)、再送(Replay)	Subscriptionへのファイル配置の契機の区分。通常配信は収集後に全Subscriptionへ複製し、再送はArchiveからTopic・期間・宛先Subscriptionを指定して再配置する。いずれもManifestに記録する
+配信構成管理	認証方式	YAML平文記述、環境変数参照(${ENV_VAR})、鍵ファイルパス指定	リモート収集(FTP/SFTP/SCP)の認証情報の指定方式。平文記述も許容しつつ、環境変数参照と鍵ファイルパス指定を推奨としてREADMEで案内する
+基盤運用管理	配布形態	シングルバイナリ、Dockerコンテナイメージ	file-pubsubの導入時の配布形態の区分。レガシー現場のLinuxサーバには追加ランタイム不要のGoシングルバイナリ、Windows開発PCでの動作確認にはDockerコンテナイメージ(docker compose一式)を使い分ける
