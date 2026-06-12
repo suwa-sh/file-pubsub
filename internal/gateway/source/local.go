@@ -1,0 +1,117 @@
+package source
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+)
+
+// Local collects files from a local directory.
+type Local struct {
+	dir string
+}
+
+// NewLocal returns a connector over the local directory dir.
+func NewLocal(dir string) *Local {
+	return &Local{dir: dir}
+}
+
+// List returns the regular files directly under the source directory.
+func (l *Local) List(ctx context.Context) ([]FileInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(l.dir)
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", l.dir, err)
+	}
+	var files []FileInfo
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			return nil, fmt.Errorf("list %s: %w", l.dir, err)
+		}
+		files = append(files, FileInfo{Name: info.Name(), Size: info.Size(), ModTime: info.ModTime()})
+	}
+	return files, nil
+}
+
+// Fetch copies the source file into destDir under a temp name, verifies the
+// copied size against the source, then renames to the final name (LR-303).
+func (l *Local) Fetch(ctx context.Context, name, destDir string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	src, err := os.Open(filepath.Join(l.dir, name))
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", name, err)
+	}
+	defer src.Close()
+	srcInfo, err := src.Stat()
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", name, err)
+	}
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("fetch %s: %w", name, err)
+	}
+	dst := filepath.Join(destDir, name)
+	tmp := dst + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", name, err)
+	}
+	written, err := io.Copy(f, src)
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil && written != srcInfo.Size() {
+		err = fmt.Errorf("size mismatch: copied %d bytes, source has %d", written, srcInfo.Size())
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("fetch %s: %w", name, err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("fetch %s: %w", name, err)
+	}
+	return dst, nil
+}
+
+// Remove deletes the original file after archive save success (delete handling).
+func (l *Local) Remove(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(l.dir, name)); err != nil {
+		return fmt.Errorf("remove %s: %w", name, err)
+	}
+	return nil
+}
+
+// Close releases nothing for the local connector.
+func (l *Local) Close() error { return nil }
+
+// validateName rejects names that escape the source directory; List only
+// yields plain file names.
+func validateName(name string) error {
+	if name == "" || name != filepath.Base(name) {
+		return fmt.Errorf("invalid file name %q", name)
+	}
+	return nil
+}

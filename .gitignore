@@ -1,0 +1,13 @@
+# build outputs
+/file-pubsub
+/bin/
+/dist/
+*.test
+coverage.out
+
+# runtime data directories (data_dir layout: lock / work / archive / manifest / dlq / processed)
+/data/
+
+# temporary files
+/tmp/
+*.tmp

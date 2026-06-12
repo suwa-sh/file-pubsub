@@ -1,0 +1,101 @@
+package store
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestDLQStore_IsolateAndRead(t *testing.T) {
+	dataDir := t.TempDir()
+	src := filepath.Join(dataDir, "archive-file")
+	if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewDLQStore(dataDir)
+	meta := DLQMeta{
+		MessageID:       "20260611T220500_invoices_inv_0042.csv",
+		Topic:           "invoices",
+		IsolationReason: "permission denied (write)",
+		FailureCount:    5,
+		IsolatedAt:      time.Date(2026, 6, 11, 22, 31, 10, 0, time.UTC),
+	}
+
+	if err := s.Isolate(src, meta); err != nil {
+		t.Fatalf("Isolate: %v", err)
+	}
+	data, err := os.ReadFile(s.FilePath("invoices", meta.MessageID))
+	if err != nil {
+		t.Fatalf("isolated file: %v", err)
+	}
+	if string(data) != "payload" {
+		t.Errorf("isolated content = %q", data)
+	}
+	got, err := s.ReadMeta("invoices", meta.MessageID)
+	if err != nil {
+		t.Fatalf("ReadMeta: %v", err)
+	}
+	if got.IsolationReason != meta.IsolationReason || got.FailureCount != 5 || !got.IsolatedAt.Equal(meta.IsolatedAt) {
+		t.Errorf("meta mismatch: %+v", got)
+	}
+}
+
+func TestDLQStore_IsolateIsIdempotent(t *testing.T) {
+	dataDir := t.TempDir()
+	src := filepath.Join(dataDir, "archive-file")
+	if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewDLQStore(dataDir)
+	meta := DLQMeta{MessageID: "m1", Topic: "invoices", IsolationReason: "x", FailureCount: 5, IsolatedAt: time.Now().UTC()}
+	if err := s.Isolate(src, meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Isolate(src, meta); err != nil {
+		t.Fatalf("re-isolation must overwrite idempotently: %v", err)
+	}
+	metas, err := s.List("invoices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 {
+		t.Errorf("List = %d entries, want 1 (no double isolation)", len(metas))
+	}
+}
+
+func TestDLQStore_List(t *testing.T) {
+	dataDir := t.TempDir()
+	src := filepath.Join(dataDir, "archive-file")
+	if err := os.WriteFile(src, []byte("p"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewDLQStore(dataDir)
+	for _, id := range []string{"b", "a"} {
+		if err := s.Isolate(src, DLQMeta{MessageID: id, Topic: "invoices", IsolationReason: "r", FailureCount: 5, IsolatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metas, err := s.List("invoices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 2 || metas[0].MessageID != "a" || metas[1].MessageID != "b" {
+		t.Errorf("List = %+v, want sorted by message_id", metas)
+	}
+}
+
+func TestDLQStore_ListMissingTopic(t *testing.T) {
+	s := NewDLQStore(t.TempDir())
+	metas, err := s.List("nope")
+	if err != nil || metas != nil {
+		t.Errorf("missing topic: got %v, %v", metas, err)
+	}
+}
+
+func TestDLQStore_IsolateRequiresIdentity(t *testing.T) {
+	s := NewDLQStore(t.TempDir())
+	if err := s.Isolate("src", DLQMeta{}); err == nil {
+		t.Error("missing message_id/topic must fail")
+	}
+}
