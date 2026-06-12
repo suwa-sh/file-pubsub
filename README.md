@@ -206,11 +206,119 @@ groups:
 
 ## ユースケース
 
-1. **システム更改 (Current/Next 並行稼働)**: 同じ Topic に current / next の Subscription を並べ、新旧 Consumer を同時稼働して切替リスクを下げる
-2. **Consumer 追加**: 会計 / DWH / BI / AI 等の新しい取り込み先を、Producer に手を入れずに Subscription 追加だけで展開する
-3. **再送 (Replay)**: 先月分を Archive から指定 Subscription へ再投入する (`replay --from ... --to ...`)
-4. **処理速度差の吸収**: Current は即時、DWH は夜間バッチ。Subscription ごとの独立配送が取り込みタイミングの差を吸収する
-5. **Messaging 移行の橋渡し**: Topic / Subscription / Replay / DLQ の概念は Kafka / RabbitMQ / Google Pub/Sub と一致。将来のメッセージング移行を見据えて先にファイルで実現しておく
+### 1. システム更改 (Current/Next 並行稼働)
+
+同じ Topic に current / next の Subscription を並べ、新旧 Consumer を同時稼働して切替リスクを下げます。
+
+```yaml
+topics:
+  - name: orders
+    source:
+      type: sftp
+      host: legacy-host01
+      directory: /out/orders
+      auth: { username: producer, key_file: /etc/file-pubsub/orders.key }
+      stability_check: { interval: 10 }
+    subscriptions:
+      - { name: current, directory: /data/subscriptions/orders/current }  # 現行システム
+      - { name: next,    directory: /data/subscriptions/orders/next }     # 更改後システム
+```
+
+```bash
+# next を追加した設定を検証してデーモンを再起動 (graceful: 処理中メッセージを完了してから停止)
+./file-pubsub config validate --config config.yaml
+systemctl restart file-pubsub   # または kill -TERM <pid> → serve 再実行
+
+# 並行稼働中: 両系へ配信されていることを確認
+./file-pubsub status --config config.yaml --topic orders
+```
+
+切替完了後は `next` を `current` に読み替えて旧側の Subscription を設定から削除するだけです。Producer は一切変更しません。
+
+### 2. Consumer 追加 (会計 / DWH / BI / AI への展開)
+
+新しい取り込み先は Subscription を 1 行足すだけです。追加した Subscription には**追加以降に収集されたメッセージ**が配信されます (過去分が必要なら次の Replay を併用)。
+
+```yaml
+    subscriptions:
+      - { name: current, directory: /data/subscriptions/orders/current }
+      - { name: dwh,     directory: /data/subscriptions/orders/dwh }      # 追加
+```
+
+```bash
+./file-pubsub config validate --config config.yaml && systemctl restart file-pubsub
+
+# 過去 30 日分を新 Subscription へ流し込む場合 (serve 停止中に実行)
+systemctl stop file-pubsub
+./file-pubsub replay --config config.yaml --topic orders \
+  --from 2026-05-13 --to 2026-06-12 --subscription dwh
+systemctl start file-pubsub
+```
+
+### 3. 再送 (Replay)
+
+「先月分を再投入したい」「DLQ に落ちた 1 件をやり直したい」を Archive から行います。replay は manifest を書くため **serve 停止中に実行**します (稼働中は lock により exit 3)。
+
+```bash
+systemctl stop file-pubsub
+
+# 期間指定: 先月分を current へ再投入
+./file-pubsub replay --config config.yaml --topic orders \
+  --from 2026-05-01 --to 2026-05-31 --subscription current
+
+# メッセージ指定: DLQ 隔離分を確認してから 1 件だけ再送
+./file-pubsub status --config config.yaml --status dlq
+./file-pubsub replay --config config.yaml --topic orders \
+  --message-id 20260601T091500_orders_orders_20260601.csv --subscription current
+
+systemctl start file-pubsub
+
+# 再送結果は Manifest に記録される (REPLAY 列が replay になる)
+./file-pubsub status --config config.yaml --topic orders
+```
+
+### 4. 処理速度差の吸収 (即時取り込みと夜間バッチの同居)
+
+設定はユースケース 2 と同じです。Subscription ごとに配送が独立しているため、current が数分おきにファイルを取得・削除しても、dwh のファイルは夜間バッチが取りに来るまでそのまま残ります。追加の設定は不要で、滞留はメトリクスで観測できます:
+
+```bash
+curl -s http://localhost:9090/metrics | grep file_pubsub_backlog_count
+# file_pubsub_backlog_count{topic="orders"} 0   ← 全 Subscription 配信済み
+```
+
+### 5. Messaging 移行の橋渡し
+
+Topic / Subscription / Replay / DLQ の概念は Kafka / RabbitMQ / Google Pub/Sub と一致します。将来メッセージング基盤へ移行するとき、運用の語彙と手順 (購読の追加 = Subscription 追加、障害時の再投入 = Replay、毒メッセージの隔離 = DLQ) を先にファイルベースで組織に定着させておけます。
+
+| file-pubsub | Kafka | Google Pub/Sub |
+|---|---|---|
+| Topic | topic | topic |
+| Subscription | consumer group | subscription |
+| Replay (Archive から再送) | offset 巻き戻し | seek / replay |
+| DLQ (`dlq/{topic}/`) | DLQ topic | dead-letter topic |
+
+### 補足: 複数システム (複数 Topic) をまとめて扱う
+
+Topic は収集ソースを個別に持てるため、別システム・別サーバの IF を 1 デーモンに束ねられます。topic 間は独立しており、一方の収集元サーバ障害は他方に波及しません (メトリクス・status・replay も topic 単位)。
+
+```yaml
+topics:
+  - name: sales-orders        # システムA: SFTP で回収
+    source: { type: sftp, host: sales-host01, directory: /out/orders,
+              auth: { username: producer, key_file: /etc/file-pubsub/sales.key },
+              stability_check: { interval: 10 } }
+    subscriptions:
+      - { name: current, directory: /data/subscriptions/sales-orders/current }
+  - name: billing-invoices    # システムB: FTP・元ファイルは残す
+    source: { type: ftp, host: billing-host01, directory: /export/invoices,
+              auth: { username: producer, password: "${BILLING_FTP_PASSWORD}" },
+              original_file_handling: copy, stability_check: { interval: 30 } }
+    subscriptions:
+      - { name: current, directory: /data/subscriptions/billing-invoices/current }
+      - { name: dwh,     directory: /data/subscriptions/billing-invoices/dwh }
+```
+
+ポーリング間隔・retention・運用主体をシステムごとに分けたい場合は、config / `data_dir` / `metrics_port` を分けて複数デーモンを並走させます (Lock は `data_dir` 単位)。
 
 ## 設計ドキュメント
 
