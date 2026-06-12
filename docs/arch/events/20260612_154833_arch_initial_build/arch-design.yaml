@@ -1,0 +1,913 @@
+version: "1.0"
+event_id: "20260612_154833_arch_initial_build"
+created_at: "2026-06-12T15:48:33"
+source: "初期構築 (trigger_event rdra:20260612_150425_initial_build, nfr:20260612_153353_nfr_initial_build)"
+
+technology_context:
+  languages:
+    - "Go"
+  frameworks:
+    - "Go 標準ライブラリ"
+    - "Prometheus クライアントライブラリ"
+    - "CLI フレームワーク(サブコマンド)"
+    - "YAML パーサ"
+  constraints:
+    - "シングルバイナリ配布(追加ランタイム不要)"
+    - "単一インスタンス前提(HA なし)"
+    - "外部 DB を使わない(ローカルファイルシステムのみ)"
+    - "オンプレ単一サーバ + Docker(Windows 開発 PC は docker compose で動作確認)"
+    - "Producer・Consumer 無改修(Consumer は従来手段でファイル GET)"
+
+system_architecture:
+  tiers:
+    - id: "tier-daemon-worker"
+      name: "常駐デーモン"
+      description: "ポーリングサイクル(Collect→Archive 保存→Fan-out→リトライ/DLQ→retention 削除)を自動実行し、内蔵 HTTP エンドポイント(/metrics Prometheus 形式・/healthz)を公開する常駐プロセス。Lock による二重起動防止・stale lock 回復・graceful shutdown を備える"
+      technology_candidates:
+        - "常駐プロセス(daemon)"
+        - "ポーリングスケジューラ"
+        - "組込 HTTP サーバ"
+      policies:
+        - id: "SP-001"
+          name: "Archive 保存必須"
+          description: "収集したファイルは配信(Fan-out)の前に必ず archive/ 配下へ Topic 別に保存する。Archive 保存が完了するまで配信を開始しない。Archive への収集時即時保存を実質バックアップとする"
+          reason: "条件「Archive保存必須」が配信前保全を要求しており、NFR A.4.1.1 RPO(Lv4 データ損失なし)・C.1.2.1 バックアップ方式(Lv1 Archive 即時保存)への対応"
+          source_model: "条件: Archive保存必須 / 情報: Archiveファイル / 状態モデル「メッセージ配送状態」 / BUC: ファイルを収集して配信するフロー / NFR A.4.1.1, NFR C.1.2.1"
+          confidence: "user"
+        - id: "SP-002"
+          name: "全 Subscription 同報配信(配送独立)"
+          description: "Topic に収集されたファイルは Topic 配下の全 Subscription ディレクトリへ同一内容で複製する。Subscription ごとに配送は独立し、一方の取得・削除は他方に影響しない。Consumer 更改時の Current/Next 並行稼働・切り戻しを Subscription 並行稼働で実現する"
+          reason: "条件「全Subscription同報配信」と Consumer 更改の並行稼働要件のため。NFR D.2.1.1 移行方式(Lv1 Consumer 切替は Subscription 並行稼働で実施)・D.5.1.1 移行リハーサル(Lv0 並行稼働で代替)への対応"
+          source_model: "条件: 全Subscription同報配信 / 情報: Subscription / 外部システム: Consumerシステム(Current) / 外部システム: Consumerシステム(Next) / NFR D.2.1.1, NFR D.5.1.1"
+          confidence: "user"
+        - id: "SP-003"
+          name: "書き込み完了判定(安定待ち収集)"
+          description: "Producer が書き込み中のファイルは収集しない。サイズ・更新時刻が安定するまで待ち、除外パターンに該当するファイルは対象外とする。リモート GET 中も一時名でダウンロードし完了後に rename する"
+          reason: "条件「書き込み完了判定」が途中状態ファイルの排除を要求し、無改修の Producer 出力(リモートファイル領域)を安全に収集するため"
+          source_model: "条件: 書き込み完了判定 / 情報: 収集ソース / 状態モデル「元ファイル収集状態」 / 外部システム: Producerシステム / 外部システム: リモートファイル領域"
+          confidence: "user"
+        - id: "SP-004"
+          name: "元ファイル処理判定(DELETE 既定/copy+処理済み管理)"
+          description: "収集後の元ファイルは GET 後 DELETE(回収)が既定。Topic 設定で「残す(copy)」を選択した場合は処理済み管理と照合し、処理済みのファイルは再収集しない"
+          reason: "条件「元ファイル処理判定」が回収/残置の 2 方式と重複収集防止を要求するため"
+          source_model: "条件: 元ファイル処理判定 / 情報: 処理済み管理 / 情報: 収集ソース / バリエーション: 元ファイル処理方式"
+          confidence: "user"
+        - id: "SP-005"
+          name: "Topic 別メトリクス公開"
+          description: "Topic 別の最終収集時刻・処理件数・配信失敗数・DLQ 件数・滞留数を Prometheus 形式の /metrics で、死活監視用の /healthz を HTTP で公開する。しきい値判定・アラート発報は外部監視基盤の責務とする。HTTP アクセスは監視ポーリングのみでオンライン応答系は対象外"
+          reason: "情報「メトリクス」と監視基盤連携のため。NFR C.1.1.1 運用監視時間(Lv5 24h 自動監視)・C.1.3.1 監視範囲(Lv3 アプリケーション監視)・C.3.1.1 障害検知方式(Lv2 監視ツール検知)・B.1.1.1 同時アクセス数(Lv1 監視ポーリングのみ)・B.1.1.3 オンラインリクエスト件数(Lv1)・B.2.1.1 レスポンスタイム(Lv2)・B.2.1.2 スループット(Lv1) への対応"
+          source_model: "情報: メトリクス / 情報: Topic / 外部システム: 監視基盤 / BUC: 配信基盤を監視するフロー / NFR C.1.1.1, NFR C.1.3.1, NFR C.3.1.1, NFR B.1.1.1, NFR B.1.1.3, NFR B.2.1.1, NFR B.2.1.2"
+          confidence: "user"
+        - id: "SP-006"
+          name: "Archive 保持期間(retention)"
+          description: "Archive の保持期間(retention)を設定でき、retention 処理では期間を超過した Archive ファイルだけを安全に削除する。長期運用でのディスク枯渇を防ぎつつ、再送・監査に必要な期間のデータは確実に残す"
+          reason: "条件「Archive保持期間」が retention 制御を要求するため(保持目安 〜90 日・〜数十 GB)"
+          source_model: "条件: Archive保持期間 / 情報: Archiveファイル / 状態モデル「Archiveファイル保持状態」 / 情報: 設定"
+          confidence: "user"
+      rules:
+        - id: "SR-001"
+          name: "AtomicWrite 配置"
+          description: "Subscription ディレクトリへの配置は一時名(file.csv.tmp)で書き込んでから正式名(file.csv)へ rename する。正式名のファイルは常に完全な内容であることを保証する"
+          reason: "条件「AtomicWrite配置」により Consumer が不完全ファイルを取得しないことを保証するため"
+          source_model: "条件: AtomicWrite配置 / BUC: ファイルを収集して配信するフロー / バリエーション: 配信方式"
+          confidence: "user"
+        - id: "SR-002"
+          name: "message_id 採番"
+          description: "message_id は収集時刻 + Topic + 元ファイル名から採番する。同名ファイルの再出力は別 message_id の新しいメッセージとして扱い、上書きで履歴を失わない"
+          reason: "条件「message_id採番」が監査・追跡可能性の維持を要求するため。NFR E.7.1.1 監査ログ(Lv2 Manifest による配送記録)への対応"
+          source_model: "条件: message_id採番 / 情報: メッセージ / NFR E.7.1.1"
+          confidence: "user"
+        - id: "SR-003"
+          name: "二重配信防止(Manifest 参照の冪等再開)"
+          description: "デーモンの再起動・処理中断後の再開では、Manifest の配送状態を参照し未配信の Subscription にのみ配信する。配信済みの Subscription へは重複配置しない冪等処理とする"
+          reason: "条件「二重配信防止」と再起動復旧要件のため。NFR A.2.1.1 サーバ内冗長化(Lv1 再起動で復旧)・A.4.1.2 RTO(Lv2 再起動 + 追いつき配信で数時間以内)への対応"
+          source_model: "条件: 二重配信防止 / 情報: Manifest / 状態モデル「メッセージ配送状態」 / BUC: 配信基盤を運用するフロー / NFR A.2.1.1, NFR A.4.1.2"
+          confidence: "user"
+        - id: "SR-004"
+          name: "リトライ上限と DLQ 隔離"
+          description: "配信失敗はリトライし、規定回数以内に成功すれば delivered とする。規定回数を超えたメッセージは dlq/ へ隔離し Manifest に dlq として記録する。恒久的な失敗を滞留させず運用者の対処判断(再送/破棄)に委ねる"
+          reason: "条件「リトライ上限」が一時障害の自動回復と恒久障害の隔離を要求するため"
+          source_model: "条件: リトライ上限 / 情報: DLQ / 情報: Manifest / アクター: 配信基盤運用者"
+          confidence: "user"
+        - id: "SR-005"
+          name: "Fan-out 処理順序(順序保証なし)"
+          description: "メッセージの順序保証はせず、Fan-out 配置はファイル名昇順で処理する。取り込み順序の制御は Consumer の責任とする"
+          reason: "条件「Fan-out処理順序」がスコープ境界(順序制御は Consumer 責務)を定めているため"
+          source_model: "条件: Fan-out処理順序 / アクター: Consumerシステム担当者"
+          confidence: "user"
+        - id: "SR-006"
+          name: "二重起動防止(Lock)"
+          description: "デーモンは起動時に Lock を取得し、同じ構成で 2 つ目のデーモンは起動せず終了する。異常終了で残った stale lock からはプロセス生存確認等で安全に回復して処理を開始する"
+          reason: "条件「二重起動防止」が単一インスタンスでの安全な継続運用を要求するため"
+          source_model: "条件: 二重起動防止 / 情報: Lock / 状態モデル「Lock状態」"
+          confidence: "user"
+        - id: "SR-007"
+          name: "graceful shutdown"
+          description: "停止シグナルを受けたら新規処理を止め、処理中のメッセージを完了してから停止する。中途半端な状態を残さない。計画停止を許容する 24 時間運用を支える"
+          reason: "条件「graceful shutdown」のため。NFR A.1.1.1 運用時間(Lv4 計画停止ありの 24 時間運用)・A.1.1.3 計画停止の有無(Lv1 定期計画停止あり)への対応"
+          source_model: "条件: graceful shutdown / 状態モデル「デーモン稼働状態」 / NFR A.1.1.1, NFR A.1.1.3"
+          confidence: "user"
+    - id: "tier-ops-cli"
+      name: "運用 CLI"
+      description: "serve / status / replay / 設定検証のサブコマンドを提供する運用インターフェース。常駐デーモンと同一バイナリで usecase 層を共有する"
+      technology_candidates:
+        - "CLI(サブコマンド)"
+      policies:
+        - id: "SP-101"
+          name: "status による配送状態照会"
+          description: "status サブコマンドは Manifest を読み、message_id・topic・Subscription 別の配送状態(delivered / failed / dlq)を表示する。並行稼働中の障害調査・再送判断・監査・DLQ 対処判断に使う"
+          reason: "BUC「配送状況を確認するフロー」で運用者が単独で状況把握できる必要があるため。NFR E.7.1.1 監査ログ(Lv2)・C.6.1.1 ログ保管期間(Lv2 Manifest 保管 90 日目安)への対応"
+          source_model: "情報: Manifest / 情報: DLQ / アクター: 配信基盤運用者 / BUC: 配送状況を確認するフロー / NFR E.7.1.1, NFR C.6.1.1"
+          confidence: "user"
+        - id: "SP-102"
+          name: "replay による Archive 再配置"
+          description: "replay サブコマンドは Topic・期間(またはメッセージ指定)・宛先 Subscription を指定して Archive から再配置し、再送の配送履歴も Manifest に記録する。指定した Subscription にのみ再配置し他 Subscription の配送に影響しない"
+          reason: "条件「Replay記録」と遡及再投入・障害復旧要件のため。NFR A.3.1.1 災害対策の範囲(Lv0 復旧は Archive + Replay で代替)・A.3.1.2 業務継続の要否(Lv0)・A.4.1.2 RTO(Lv2 再起動 + Replay で数時間以内)への対応"
+          source_model: "条件: Replay記録 / 情報: Archiveファイル / 情報: Manifest / BUC: ファイルを再送するフロー / NFR A.3.1.1, NFR A.3.1.2, NFR A.4.1.2"
+          confidence: "user"
+      rules:
+        - id: "SR-101"
+          name: "設定検証サブコマンド"
+          description: "単一 YAML 設定の構文・参照整合(Topic↔Subscription↔収集ソース↔認証情報参照)を起動前に検証するサブコマンドを提供する"
+          reason: "情報「設定」が配信構成管理の起点であり、設定ミスをデーモン起動前に検出するため"
+          source_model: "情報: 設定 / BUC: 配信基盤を運用するフロー"
+          confidence: "user"
+        - id: "SR-102"
+          name: "同一バイナリのサブコマンド構成"
+          description: "serve(デーモン起動)/ status / replay / 設定検証を単一バイナリのサブコマンドとして提供し、usecase 層のコードを共有する"
+          reason: "ユーザー指定: シングルバイナリ配布の制約下で運用機能を追加コンポーネントなしに提供する"
+          source_model: "UC: statusコマンドで配送状態を確認する / UC: 再送(Replay)を実行する / UC: デーモンを起動する"
+          confidence: "user"
+  cross_tier_policies:
+    - id: "CTP-001"
+      name: "構造化ログ"
+      description: "message_id・Topic・Subscription・イベント種別を含む JSON 構造化ログを出力する。どのメッセージのどの Subscription 配信が失敗したかを特定でき、運用者が外部の助けなしに障害調査を完結できる粒度とする。ログ・Manifest の保管は 90 日目安"
+      reason: "情報「ログ」の要求粒度のため。NFR C.6.1.1 ログ保管期間(Lv2 3ヶ月)・E.7.1.1 監査ログ(Lv2 配送記録 + 構造化ログ)への対応"
+      source_model: "情報: ログ / 情報: メッセージ / アクター: 配信基盤運用者 / BUC: 配送状況を確認するフロー / NFR C.6.1.1, NFR E.7.1.1"
+      confidence: "user"
+    - id: "CTP-002"
+      name: "認証情報の扱い"
+      description: "収集ソース接続の認証情報は YAML 平文記述を許容しつつ、環境変数参照(${ENV_VAR})と鍵ファイルパス指定を推奨とし README で案内する"
+      reason: "情報「認証情報」の記述方式要件のため。NFR E.5.1.1 認証方式(Lv1 鍵/環境変数推奨・平文許容)・E.1.1.1 セキュリティポリシー(Lv1 OSS 既定の簡易ガイドライン)への対応"
+      source_model: "情報: 認証情報 / バリエーション: 認証方式 / NFR E.5.1.1, NFR E.1.1.1"
+      confidence: "user"
+    - id: "CTP-003"
+      name: "単一 YAML 設定"
+      description: "topics / 収集ソース / subscriptions / ポーリング間隔 / retention / リトライ / メトリクスポート / 認証情報参照を単一 YAML で定義する。Producer を変更せずに配信構成を増減・変更できる"
+      reason: "情報「設定」が配信構成管理の起点であり、Topic/Subscription は設定追加のみで拡張できるため"
+      source_model: "情報: 設定 / 情報: Topic / 情報: Subscription / 情報: 収集ソース / BUC: ファイルを収集して配信するフロー"
+      confidence: "user"
+    - id: "CTP-004"
+      name: "ファイル内容に関知しない pass-through"
+      description: "ファイル内容の変換・解釈は行わず pass-through で配送する。保管時暗号化は行わず、通信暗号化は SFTP/SCP で可・FTP はレガシー互換で平文許容。規制対応・データ秘匿は導入先責務とする"
+      reason: "ユーザー指定: pass-through 配信。NFR E.6.1.1 保管時暗号化(Lv0 なし)・E.6.1.2 通信時暗号化(Lv1 SFTP/SCP のみ)・E.1.1.1 セキュリティポリシー(Lv1 導入先責務)への対応"
+      source_model: "情報: 収集ソース / 外部システム: リモートファイル領域 / NFR E.6.1.1, NFR E.6.1.2, NFR E.1.1.1"
+      confidence: "user"
+    - id: "CTP-005"
+      name: "シングルバイナリ + Docker 配布"
+      description: "Go シングルバイナリ(追加ランタイム不要・Linux 主対象 + macOS)と Docker コンテナイメージの 2 形態で配布する。Windows 開発 PC では docker compose の動作確認環境で収集〜配信を事前確認できる。Web UI は持たない(ブラウザ要件なし)。新規構築のためデータ移行はない"
+      reason: "バリエーション「配布形態」とレガシー現場への導入容易性のため。NFR F.1.1.1 対応OS(Lv2)・F.1.1.2 対応ブラウザ(Lv0 Web UI なし)・C.4.1.1 テスト環境(Lv2 docker compose)・D.4.1.1 データ移行量(Lv1 移行データなし)への対応"
+      source_model: "バリエーション: 配布形態 / BUC: 配信基盤を運用するフロー / NFR F.1.1.1, NFR F.1.1.2, NFR C.4.1.1, NFR D.4.1.1"
+      confidence: "user"
+    - id: "CTP-006"
+      name: "単一インスタンス・非冗長(復旧は再起動 + Replay)"
+      description: "サーバ・ネットワーク・ストレージ・電源の冗長化は行わず、単一インスタンスで運用する。障害時は再起動による冪等再開と Archive からの Replay で復旧する(切替先を持たないため復旧は部品交換・再起動ベース)"
+      reason: "ユーザー指定: HA なし・冗長化 Lv0〜1。NFR A.2.1.1 サーバ内冗長化(Lv1)・A.2.3.1 ネットワーク機器冗長化(Lv1)・A.2.5.1 ストレージ冗長化(Lv0 導入先委譲)・A.2.6.2 電源冗長化(Lv1)・A.1.2.1 サービス切替時間(Lv1 24時間未満)への対応"
+      source_model: "条件: 二重起動防止 / 情報: Lock / NFR A.2.1.1, NFR A.2.3.1, NFR A.2.5.1, NFR A.2.6.2, NFR A.1.2.1"
+      confidence: "user"
+    - id: "CTP-007"
+      name: "セキュリティ統制は最小実装 + 導入先責務"
+      description: "アプリは攻撃面を最小化(Web UI なし・HTTP は監視エンドポイントのみ・WAF 不要)し、アクセス制御は OS のファイル権限・実行ユーザに依存する。リスク分析は簡易チェックリスト、セキュリティ診断なし、FW/マルウェア対策/インシデント連絡体制・パッチ適用は導入先サーバの標準運用に委ねる(セキュリティパッチのみ随時)"
+      reason: "ユーザー指定: 規制対応なし・OSS 既定。NFR E.1.1.1 セキュリティポリシー(Lv1)・E.2.1.1 リスク分析(Lv1)・E.3.1.1 診断(Lv0)・E.5.2.1 アクセス制御(Lv1 OS 権限)・E.8.1.1 FW(Lv1)・E.9.1.1 マルウェア対策(Lv1)・E.10.1.1 WAF(Lv0 Web UI なし)・E.11.1.1 インシデント対応(Lv1)・C.2.1.2 パッチ適用方針(Lv1)への対応"
+      source_model: "NFR E.1.1.1, NFR E.2.1.1, NFR E.3.1.1, NFR E.5.2.1, NFR E.8.1.1, NFR E.9.1.1, NFR E.10.1.1, NFR E.11.1.1, NFR C.2.1.2"
+      confidence: "user"
+    - id: "CTP-008"
+      name: "性能設計方針(ポーリング逐次処理 + スケールアップ)"
+      description: "オンライン応答系は持たず、ポーリング周期ごとの逐次処理で数千ファイル/日(〜50 topic、数十 MB 中心・最大 500MB、ピーク 1.5 倍)を処理する。性能拡張はスケールアップ(設定チューニング・リソース増強)で対応し、性能テストは単体で実施する"
+      reason: "ユーザー指定: バッチ/常駐処理中心の処理量。NFR B.1.1.1 同時アクセス数(Lv1)・B.1.1.3 オンラインリクエスト件数(Lv1)・B.1.2.1 ピーク時同時アクセス数(Lv1)・B.2.1.1 レスポンスタイム(Lv2)・B.2.1.2 スループット(Lv1)・B.2.2.1 バッチ処理時間(Lv1)・B.3.1.1 CPU拡張性(Lv1)・B.4.1.1 性能テスト(Lv1)への対応"
+      source_model: "BUC: ファイルを収集して配信するフロー / 情報: メッセージ / NFR B.1.1.1, NFR B.1.1.3, NFR B.1.2.1, NFR B.2.1.1, NFR B.2.1.2, NFR B.2.2.1, NFR B.3.1.1, NFR B.4.1.1"
+      confidence: "user"
+    - id: "CTP-009"
+      name: "運用体制(24h 自動監視 + 営業時間内人対応)"
+      description: "監視は外部監視基盤による /healthz・/metrics の 24 時間自動監視とし、しきい値判定・アラート発報は外部監視基盤の責務。人による対応(障害調査・再送判断)は営業時間内・兼務の配信基盤運用者が行う"
+      reason: "ユーザー指定: 24h 自動監視 + 営業時間内人対応。NFR C.1.1.1 運用監視時間(Lv5 24時間自動監視)・C.5.1.1 サポート時間(Lv1 営業時間内)・C.3.1.1 障害検知方式(Lv2 監視ツール検知)への対応"
+      source_model: "アクター: 配信基盤運用者 / 外部システム: 監視基盤 / BUC: 配信基盤を監視するフロー / NFR C.1.1.1, NFR C.5.1.1, NFR C.3.1.1"
+      confidence: "user"
+  cross_tier_rules:
+    - id: "CTR-001"
+      name: "ベンダーニュートラル"
+      description: "特定クラウドベンダーのサービスに依存しない。OS とローカルファイルシステム、標準プロトコル(FTP/SFTP/SCP/HTTP)のみを前提とする"
+      reason: "一般的なベストプラクティスとして適用(オンプレのレガシー現場へ導入するため環境非依存が必須)"
+      source_model: "なし"
+      confidence: "default"
+    - id: "CTR-002"
+      name: "エラーは終了コードと構造化ログで表現"
+      description: "デーモン・CLI ともエラーは終了コード(正常/異常の判別)と JSON 構造化ログで表現する。スタックトレースの標準エラー出力垂れ流しを利用者向けの結果にしない"
+      reason: "情報「ログ」の障害調査要件と CLI の運用自動化(スクリプト連携)のため"
+      source_model: "情報: ログ"
+      confidence: "user"
+    - id: "CTR-003"
+      name: "全配送操作は Manifest に記録"
+      description: "通常配信(Fan-out)・再送(Replay)のいずれの配送も message_id・topic・Subscription 単位で Manifest に記録する。配送状態の正は常に Manifest とする"
+      reason: "情報「Manifest」が配送管理の単一の真実であり、監査・冪等再開・再送判断の基盤となるため。NFR E.7.1.1 監査ログ(Lv2)への対応"
+      source_model: "情報: Manifest / 条件: Replay記録 / バリエーション: 配信方式 / NFR E.7.1.1"
+      confidence: "user"
+  diagram_mermaid: |
+    graph TD
+      PROD["Producerシステム(無改修)"] -->|"ファイル出力"| REMOTE["リモートファイル領域(FTP/SFTP/SCP)"]
+      REMOTE -->|"Collect(安定待ち・GET後DELETE/copy)"| DAEMON["tier-daemon-worker 常駐デーモン"]
+      DAEMON -->|"配信前に必ず保存"| ARCH[("archive/{topic}/")]
+      ARCH -->|"Fan-out(AtomicWrite)"| SUBS[("subscriptions/{current,next,test}/")]
+      SUBS -->|"従来手段でGET"| CCUR["Consumerシステム(Current)"]
+      SUBS -->|"従来手段でGET"| CNXT["Consumerシステム(Next)"]
+      DAEMON -->|"配送記録"| MAN[("Manifest/DLQ/Lock/処理済み管理")]
+      DAEMON -->|"/metrics・/healthz"| MON["監視基盤(Prometheus/Grafana等)"]
+      CLI["tier-ops-cli 運用 CLI(serve/status/replay/設定検証)"] -->|"照会・再配置"| MAN
+      CLI -->|"Replay読出"| ARCH
+      OPS["配信基盤運用者"] --> CLI
+
+app_architecture:
+  tier_layers:
+    - tier_id: "tier-daemon-worker"
+      layers:
+        - id: "L-daemon-runtime"
+          name: "ランタイム層"
+          responsibility: "エントリポイント、シグナルハンドリング(graceful shutdown)、ポーリングスケジューラ、組込 HTTP サーバ(/metrics・/healthz)の起動と停止"
+          allowed_dependencies:
+            - "L-daemon-usecase"
+          policies:
+            - id: "LP-001"
+              name: "graceful shutdown のシグナル制御"
+              description: "停止シグナル受信時は新規サイクルの起動を止め、処理中のメッセージ完了を待ってから Lock を解放して終了する"
+              reason: "条件「graceful shutdown」とデーモン稼働状態の遷移(稼働中→停止処理中→停止済)を runtime 層で制御するため"
+              source_model: "条件: graceful shutdown / 状態モデル「デーモン稼働状態」"
+              confidence: "user"
+          rules:
+            - id: "LR-001"
+              name: "ポーリングスケジューラ"
+              description: "設定のポーリング間隔ごとに usecase の収集配信サイクルを起動する。サイクルの多重起動はしない(前回サイクル完了を待つ)"
+              reason: "情報「設定」のポーリング間隔に基づく常駐実行のため"
+              source_model: "情報: 設定 / BUC: ファイルを収集して配信するフロー"
+              confidence: "user"
+            - id: "LR-002"
+              name: "起動時 Lock 取得と stale 回復"
+              description: "起動時に Lock 取得を試み、取得できない場合は二重起動として終了する。stale lock はプロセス生存確認で判定して安全に回復する"
+              reason: "条件「二重起動防止」の Lock 状態遷移(取得済/stale→取得済)を起動シーケンスで実装するため"
+              source_model: "条件: 二重起動防止 / 情報: Lock / 状態モデル「Lock状態」"
+              confidence: "user"
+        - id: "L-daemon-usecase"
+          name: "ユースケース層"
+          responsibility: "収集配信サイクル(collect→archive→fanout)、リトライ/DLQ 処理、retention 削除、Replay、status 照会のフロー制御。トランザクション境界はメッセージ単位の処理進行と Manifest 更新"
+          allowed_dependencies:
+            - "L-daemon-domain"
+            - "L-daemon-gateway"
+          policies:
+            - id: "LP-101"
+              name: "メッセージ単位のトランザクション境界"
+              description: "1 メッセージの処理進行(収集→Archive 保存→Subscription 別配信)と Manifest 更新を単位として進め、中断してもメッセージ単位で冪等に再開できる構造とする"
+              reason: "条件「二重配信防止」の冪等再開を usecase の処理単位設計で保証するため"
+              source_model: "条件: 二重配信防止 / 情報: Manifest / 状態モデル「メッセージ配送状態」"
+              confidence: "user"
+          rules:
+            - id: "LR-101"
+              name: "Archive 保存完了前の配信禁止"
+              description: "collect→archive→fanout の順序を固定し、Archive 保存の完了を確認してから Fan-out を開始する"
+              reason: "条件「Archive保存必須」の順序保証を usecase のフロー制御で実装するため"
+              source_model: "条件: Archive保存必須"
+              confidence: "user"
+            - id: "LR-102"
+              name: "エラーのリトライ可否分類"
+              description: "配信エラーを一時的(リトライ対象)と恒久的(リトライ上限超過で DLQ 隔離)に分類し、リトライ回数を Manifest に記録する"
+              reason: "条件「リトライ上限」の自動回復と DLQ 隔離の判断を usecase に集約するため"
+              source_model: "条件: リトライ上限 / 情報: DLQ"
+              confidence: "user"
+        - id: "L-daemon-domain"
+          name: "ドメイン層"
+          responsibility: "Topic/Subscription/メッセージ/Manifest のモデル、メッセージ配送状態遷移、message_id 採番規則、書き込み完了判定(安定判定)ルール、二重配信防止(冪等)判定、リトライ上限判定"
+          allowed_dependencies: []
+          policies:
+            - id: "LP-201"
+              name: "ドメイン層は I/O を持たない"
+              description: "ドメイン層はファイル・ネットワーク I/O を行わず、判定・採番・状態遷移の純粋ロジックのみを持つ。テスト容易性を確保する"
+              reason: "一般的なベストプラクティスとして適用(配送判定ロジックの単体テスト容易性)"
+              source_model: "なし"
+              confidence: "default"
+          rules:
+            - id: "LR-201"
+              name: "メッセージ配送状態遷移の集約"
+              description: "収集済→Archive保存済→配信中→配信済(delivered)/配信失敗(failed)→リトライ中→DLQ隔離(dlq)の状態遷移ルールをドメイン層に集約する"
+              reason: "状態モデル「メッセージ配送状態」の遷移を一箇所で管理し、配送進行の整合を保つため"
+              source_model: "状態モデル「メッセージ配送状態」 / 情報: メッセージ"
+              confidence: "user"
+            - id: "LR-202"
+              name: "message_id 採番規則のドメイン実装"
+              description: "収集時刻 + Topic + 元ファイル名からの message_id 採番をドメイン層の純粋関数として実装する"
+              reason: "条件「message_id採番」の規則を一意の実装に集約するため"
+              source_model: "条件: message_id採番"
+              confidence: "user"
+            - id: "LR-203"
+              name: "安定判定ルールのドメイン実装"
+              description: "サイズ・更新時刻の安定待ち判定と除外パターン判定をドメイン層のルールとして実装し、収集コネクタの種別に依存させない"
+              reason: "条件「書き込み完了判定」をソース種別非依存の共通ルールにするため"
+              source_model: "条件: 書き込み完了判定 / 状態モデル「元ファイル収集状態」"
+              confidence: "user"
+        - id: "L-daemon-gateway"
+          name: "ゲートウェイ層"
+          responsibility: "収集コネクタ(local/FTP/SFTP/SCP)、ファイルストア(archive/subscriptions/manifest/lock/dlq/processed の読み書き、AtomicWrite 実装)、メトリクスエクスポータ"
+          allowed_dependencies:
+            - "L-daemon-domain"
+          policies:
+            - id: "LP-301"
+              name: "収集コネクタの共通インターフェース"
+              description: "収集コネクタ(local/FTP/SFTP/SCP)は共通インターフェース経由で差し替え可能とする。IF 導入はここのみで、後段(Archive/Fan-out/Manifest)をソース種別に依存させない"
+              reason: "情報「収集ソース」がソース種別の差し替え可能性を要求しており、変動点が収集プロトコルに限定されるため"
+              source_model: "情報: 収集ソース / バリエーション: 収集ソース種別 / 外部システム: リモートファイル領域"
+              confidence: "user"
+          rules:
+            - id: "LR-301"
+              name: "AtomicWrite のファイルストア実装"
+              description: "Subscription 配置・Manifest 更新等の書き込みは一時名で書いてから rename する AtomicWrite をファイルストアの共通実装として提供する"
+              reason: "条件「AtomicWrite配置」を全ファイル書き込みの共通機構として実装するため"
+              source_model: "条件: AtomicWrite配置"
+              confidence: "user"
+            - id: "LR-302"
+              name: "メトリクスエクスポータ"
+              description: "Topic 別の最終収集時刻・処理件数・配信失敗数・DLQ 件数・滞留数をインメモリで集計し、Prometheus 形式で公開するエクスポータを gateway 層に置く"
+              reason: "情報「メトリクス」の公開を I/O 境界である gateway 層に集約するため"
+              source_model: "情報: メトリクス / 外部システム: 監視基盤"
+              confidence: "user"
+            - id: "LR-303"
+              name: "一時名ダウンロード"
+              description: "リモート GET 中は一時名でダウンロードし、完了後に rename する。GET 後 DELETE は Archive 保存の成功を確認してから行う"
+              reason: "条件「書き込み完了判定」「元ファイル処理判定」の安全な収集手順を収集コネクタの共通規約とするため"
+              source_model: "条件: 書き込み完了判定 / 条件: 元ファイル処理判定 / 情報: 処理済み管理"
+              confidence: "user"
+      cross_layer_policies:
+        - id: "CLP-001"
+          name: "IF なし(直接依存)、IF は収集コネクタのみ"
+          description: "レイヤー間は直接依存とし開発スピードを優先する。インターフェースを導入するのは差し替え要件が明確な収集コネクタ(gateway 層内)のみ。前提が崩れた場合に IF 導入で依存を内側に向ける"
+          reason: "新規構築で疎結合化は過剰。変動点はソース種別(FTP/SFTP/SCP/local)に限定されるため"
+          source_model: "バリエーション: 収集ソース種別"
+          confidence: "user"
+      cross_layer_rules:
+        - id: "CLR-001"
+          name: "エラーは usecase で分類し runtime で変換"
+          description: "ドメイン・gateway のエラーは usecase でリトライ可否を分類し、runtime(および CLI)で終了コードと構造化ログに変換する"
+          reason: "レイヤー責務の分離(判断は usecase、表現は外殻)のため"
+          source_model: "情報: ログ / 条件: リトライ上限"
+          confidence: "user"
+      diagram_mermaid: |
+        graph TD
+          RT["L-daemon-runtime ランタイム層"] --> UC["L-daemon-usecase ユースケース層"]
+          UC --> DM["L-daemon-domain ドメイン層"]
+          UC --> GW["L-daemon-gateway ゲートウェイ層"]
+          GW --> DM
+    - tier_id: "tier-ops-cli"
+      layers:
+        - id: "L-cli-command"
+          name: "コマンド層"
+          responsibility: "サブコマンドの引数解析・バリデーション・出力整形(status のテーブル表示等)。処理本体は同一バイナリ内で共有する daemon ティアの usecase 層に委譲する"
+          allowed_dependencies: []
+          policies:
+            - id: "LP-401"
+              name: "status の出力整形"
+              description: "Manifest の配送状態を topic / Subscription 別に集計し、運用者が再送判断・DLQ 対処判断に使えるテーブル形式で表示する"
+              reason: "BUC「配送状況を確認するフロー」で運用者が単独で判断できる表示が必要なため"
+              source_model: "情報: Manifest / アクター: 配信基盤運用者 / BUC: 配送状況を確認するフロー"
+              confidence: "user"
+          rules:
+            - id: "LR-401"
+              name: "引数バリデーション"
+              description: "replay の Topic・期間(またはメッセージ指定)・宛先 Subscription 等の引数をコマンド層で検証し、不正な指定は実行前に終了コードで弾く"
+              reason: "条件「Replay記録」の指定パラメータを誤配置前に検証するため"
+              source_model: "条件: Replay記録 / 情報: 設定"
+              confidence: "user"
+      cross_layer_policies:
+        - id: "CLP-101"
+          name: "daemon ティアのレイヤー共有"
+          description: "usecase / domain / gateway は tier-daemon-worker のレイヤーを単一バイナリのパッケージ共有で利用する。CLI 専用のビジネスロジックは持たない"
+          reason: "ユーザー指定: 同一バイナリで usecase 層を共有し、配送ロジックの二重実装を避ける"
+          source_model: "情報: Manifest / 情報: Archiveファイル"
+          confidence: "user"
+      cross_layer_rules:
+        - id: "CLR-101"
+          name: "CLI からのデータアクセスは共有 usecase 経由"
+          description: "コマンド層は Manifest / Archive へ直接アクセスせず、共有する usecase 層(status 照会・Replay)を経由する"
+          reason: "配送状態の読み書き規約(AtomicWrite・Manifest 記録)を一箇所に保つため"
+          source_model: "なし"
+          confidence: "default"
+      diagram_mermaid: |
+        graph TD
+          CMD["L-cli-command コマンド層"] --> SUC["共有 usecase 層(tier-daemon-worker のパッケージ)"]
+          SUC --> SDM["共有 domain 層"]
+          SUC --> SGW["共有 gateway 層"]
+
+data_architecture:
+  entities:
+    - id: "E-001"
+      name: "設定"
+      source_info: "情報: 設定"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "polling_interval"
+          type: "integer"
+          description: "ポーリング間隔(秒)"
+          nullable: false
+          primary_key: false
+        - name: "archive_retention"
+          type: "integer"
+          description: "Archive 保持期間(retention、日数)"
+          nullable: false
+          primary_key: false
+        - name: "retry_max_count"
+          type: "integer"
+          description: "リトライ上限回数"
+          nullable: false
+          primary_key: false
+        - name: "metrics_port"
+          type: "integer"
+          description: "メトリクス公開用 HTTP ポート"
+          nullable: false
+          primary_key: false
+        - name: "topic_definitions"
+          type: "text"
+          description: "Topic 定義一覧"
+          nullable: false
+          primary_key: false
+        - name: "subscription_definitions"
+          type: "text"
+          description: "Subscription 定義一覧"
+          nullable: false
+          primary_key: false
+        - name: "source_definitions"
+          type: "text"
+          description: "収集ソース定義一覧"
+          nullable: false
+          primary_key: false
+        - name: "credential_refs"
+          type: "text"
+          description: "認証情報参照(環境変数参照/鍵ファイルパス)"
+          nullable: true
+          primary_key: false
+      relationships:
+        - target_entity: "E-002"
+          type: "1:N"
+          description: "設定が複数の Topic を定義する"
+        - target_entity: "E-003"
+          type: "1:N"
+          description: "設定が複数の Subscription を定義する"
+        - target_entity: "E-004"
+          type: "1:N"
+          description: "設定が複数の収集ソースを定義する"
+        - target_entity: "E-005"
+          type: "1:N"
+          description: "設定が認証情報を参照する"
+    - id: "E-002"
+      name: "Topic"
+      source_info: "情報: Topic"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "topic_name"
+          type: "string"
+          description: "Topic 名(orders / customers / invoices 等の論理的なファイル種別)"
+          nullable: false
+          primary_key: true
+        - name: "description"
+          type: "string"
+          description: "Topic の説明"
+          nullable: true
+          primary_key: false
+      relationships:
+        - target_entity: "E-004"
+          type: "N:1"
+          description: "Topic は 1 つの収集ソースから収集される(収集ソースは複数 Topic を持ちうる)"
+        - target_entity: "E-003"
+          type: "1:N"
+          description: "Topic 配下に複数の Subscription が定義される"
+        - target_entity: "E-006"
+          type: "1:N"
+          description: "Topic に複数のメッセージが収集される"
+        - target_entity: "E-010"
+          type: "1:N"
+          description: "Topic 別に Archive ファイルが保存される"
+        - target_entity: "E-012"
+          type: "1:1"
+          description: "Topic ごとにメトリクスが集計される"
+    - id: "E-003"
+      name: "Subscription"
+      source_info: "情報: Subscription"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "topic_name"
+          type: "string"
+          description: "所属 Topic"
+          nullable: false
+          primary_key: true
+        - name: "subscription_name"
+          type: "string"
+          description: "Subscription 名(current / next / test 等)"
+          nullable: false
+          primary_key: true
+        - name: "target_directory_path"
+          type: "string"
+          description: "配置先ディレクトリパス"
+          nullable: false
+          primary_key: false
+      relationships:
+        - target_entity: "E-007"
+          type: "1:N"
+          description: "Subscription 別の配送状態が Manifest に記録される"
+    - id: "E-004"
+      name: "収集ソース"
+      source_info: "情報: 収集ソース"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "source_type"
+          type: "string"
+          description: "ソース種別(FTP / SFTP / SCP / ローカルディレクトリ)"
+          nullable: false
+          primary_key: false
+        - name: "host"
+          type: "string"
+          description: "接続先ホスト(ローカルディレクトリの場合は不要)"
+          nullable: true
+          primary_key: false
+        - name: "target_directory_path"
+          type: "string"
+          description: "対象ディレクトリパス"
+          nullable: false
+          primary_key: false
+        - name: "original_file_handling"
+          type: "string"
+          description: "元ファイル処理方式(回収 / 残す)"
+          nullable: false
+          primary_key: false
+        - name: "stability_check_config"
+          type: "text"
+          description: "安定待ち判定設定(サイズ・更新時刻の安定待ち)"
+          nullable: false
+          primary_key: false
+        - name: "exclude_patterns"
+          type: "text"
+          description: "除外パターン"
+          nullable: true
+          primary_key: false
+      relationships:
+        - target_entity: "E-005"
+          type: "N:1"
+          description: "収集ソースが接続用の認証情報を使う"
+        - target_entity: "E-009"
+          type: "1:N"
+          description: "収集ソースごとに処理済み管理の記録を持つ(copy 設定時)"
+    - id: "E-005"
+      name: "認証情報"
+      source_info: "情報: 認証情報"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "description_method"
+          type: "string"
+          description: "記述方式(平文 / 環境変数参照 / 鍵ファイルパス)"
+          nullable: false
+          primary_key: false
+        - name: "username"
+          type: "string"
+          description: "ユーザー名"
+          nullable: false
+          primary_key: false
+        - name: "password_or_key_file_path"
+          type: "string"
+          description: "パスワードまたは鍵ファイルパス"
+          nullable: false
+          primary_key: false
+      relationships: []
+    - id: "E-006"
+      name: "メッセージ"
+      source_info: "情報: メッセージ"
+      model_type: "event"
+      attributes:
+        - name: "message_id"
+          type: "string"
+          description: "message_id(収集時刻 + Topic + 元ファイル名から採番)"
+          nullable: false
+          primary_key: true
+        - name: "topic_name"
+          type: "string"
+          description: "Topic 名"
+          nullable: false
+          primary_key: false
+        - name: "original_file_name"
+          type: "string"
+          description: "元ファイル名"
+          nullable: false
+          primary_key: false
+        - name: "collected_at"
+          type: "datetime"
+          description: "収集時刻"
+          nullable: false
+          primary_key: false
+      relationships:
+        - target_entity: "E-007"
+          type: "1:1"
+          description: "メッセージごとに Manifest が配送状態を管理する"
+        - target_entity: "E-010"
+          type: "1:1"
+          description: "メッセージは Archive ファイルとして保全される"
+        - target_entity: "E-008"
+          type: "1:1"
+          description: "リトライ上限超過時に DLQ へ隔離される(0..1)"
+        - target_entity: "E-013"
+          type: "1:N"
+          description: "メッセージの処理イベントがログに記録される"
+    - id: "E-007"
+      name: "Manifest"
+      source_info: "情報: Manifest"
+      model_type: "event_snapshot"
+      attributes:
+        - name: "message_id"
+          type: "string"
+          description: "対象メッセージの message_id"
+          nullable: false
+          primary_key: true
+        - name: "topic_name"
+          type: "string"
+          description: "Topic 名"
+          nullable: false
+          primary_key: false
+        - name: "subscription_delivery_status"
+          type: "text"
+          description: "Subscription 別配送状態(delivered / failed / dlq)。配送イベント追記 + Subscription 別現在状態"
+          nullable: false
+          primary_key: false
+        - name: "retry_count"
+          type: "integer"
+          description: "リトライ回数"
+          nullable: false
+          primary_key: false
+        - name: "delivered_at"
+          type: "datetime"
+          description: "配送日時"
+          nullable: true
+          primary_key: false
+        - name: "replay_records"
+          type: "text"
+          description: "再送(Replay)記録"
+          nullable: true
+          primary_key: false
+      relationships:
+        - target_entity: "E-008"
+          type: "1:1"
+          description: "DLQ 隔離時に dlq として記録される(0..1)"
+    - id: "E-008"
+      name: "DLQ"
+      source_info: "情報: DLQ"
+      model_type: "event"
+      attributes:
+        - name: "message_id"
+          type: "string"
+          description: "隔離メッセージ(message_id)"
+          nullable: false
+          primary_key: true
+        - name: "isolation_reason"
+          type: "string"
+          description: "隔離理由"
+          nullable: false
+          primary_key: false
+        - name: "failure_count"
+          type: "integer"
+          description: "失敗回数"
+          nullable: false
+          primary_key: false
+        - name: "isolated_at"
+          type: "datetime"
+          description: "隔離日時"
+          nullable: false
+          primary_key: false
+      relationships: []
+    - id: "E-009"
+      name: "処理済み管理"
+      source_info: "情報: 処理済み管理"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "source_file_identifier"
+          type: "string"
+          description: "収集元ファイル識別子(ファイル名・収集元パス等)"
+          nullable: false
+          primary_key: true
+        - name: "processed_at"
+          type: "datetime"
+          description: "処理済み判定日時"
+          nullable: false
+          primary_key: false
+      relationships:
+        - target_entity: "E-006"
+          type: "1:1"
+          description: "処理済み記録は収集済みメッセージに対応する"
+    - id: "E-010"
+      name: "Archiveファイル"
+      source_info: "情報: Archiveファイル"
+      model_type: "event"
+      attributes:
+        - name: "archive_path"
+          type: "string"
+          description: "保存先パス(Topic 別。archive/{topic}/ 配下)"
+          nullable: false
+          primary_key: true
+        - name: "topic_name"
+          type: "string"
+          description: "Topic 名"
+          nullable: false
+          primary_key: false
+        - name: "message_id"
+          type: "string"
+          description: "対応するメッセージの message_id"
+          nullable: false
+          primary_key: false
+        - name: "original_file_name"
+          type: "string"
+          description: "元ファイル名"
+          nullable: false
+          primary_key: false
+        - name: "file_content"
+          type: "text"
+          description: "ファイル内容(pass-through で保全)"
+          nullable: false
+          primary_key: false
+        - name: "saved_at"
+          type: "datetime"
+          description: "保存日時"
+          nullable: false
+          primary_key: false
+        - name: "retention_deadline"
+          type: "datetime"
+          description: "保持期限"
+          nullable: false
+          primary_key: false
+      relationships: []
+    - id: "E-011"
+      name: "Lock"
+      source_info: "情報: Lock"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "lock_holder_process_info"
+          type: "string"
+          description: "ロック保持プロセス情報"
+          nullable: false
+          primary_key: false
+        - name: "acquired_at"
+          type: "datetime"
+          description: "取得日時(stale 判定用)"
+          nullable: false
+          primary_key: false
+      relationships: []
+    - id: "E-012"
+      name: "メトリクス"
+      source_info: "情報: メトリクス"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "topic_name"
+          type: "string"
+          description: "Topic 名"
+          nullable: false
+          primary_key: true
+        - name: "last_collected_at"
+          type: "datetime"
+          description: "Topic 別最終収集時刻"
+          nullable: true
+          primary_key: false
+        - name: "processed_count"
+          type: "integer"
+          description: "処理件数"
+          nullable: false
+          primary_key: false
+        - name: "delivery_failure_count"
+          type: "integer"
+          description: "配信失敗数"
+          nullable: false
+          primary_key: false
+        - name: "dlq_count"
+          type: "integer"
+          description: "DLQ 件数"
+          nullable: false
+          primary_key: false
+        - name: "backlog_count"
+          type: "integer"
+          description: "滞留数"
+          nullable: false
+          primary_key: false
+      relationships: []
+    - id: "E-013"
+      name: "ログ"
+      source_info: "情報: ログ"
+      model_type: "event"
+      attributes:
+        - name: "logged_at"
+          type: "datetime"
+          description: "出力日時"
+          nullable: false
+          primary_key: false
+        - name: "message_id"
+          type: "string"
+          description: "対象メッセージの message_id"
+          nullable: true
+          primary_key: false
+        - name: "topic_name"
+          type: "string"
+          description: "Topic 名"
+          nullable: true
+          primary_key: false
+        - name: "subscription_name"
+          type: "string"
+          description: "Subscription 名"
+          nullable: true
+          primary_key: false
+        - name: "event_type"
+          type: "string"
+          description: "イベント種別"
+          nullable: false
+          primary_key: false
+        - name: "error_detail"
+          type: "text"
+          description: "エラー内容"
+          nullable: true
+          primary_key: false
+      relationships:
+        - target_entity: "E-003"
+          type: "N:1"
+          description: "どの Subscription の配信イベントかを記録する"
+  storage_mapping:
+    - entity_id: "E-001"
+      storage_type: "file"
+      reason: "単一 YAML 設定ファイル。外部 DB を使わない制約と導入容易性のため"
+      confidence: "user"
+    - entity_id: "E-002"
+      storage_type: "file"
+      reason: "設定 YAML 内の Topic 定義として保持する"
+      confidence: "user"
+    - entity_id: "E-003"
+      storage_type: "file"
+      reason: "設定 YAML 内の Subscription 定義として保持する"
+      confidence: "user"
+    - entity_id: "E-004"
+      storage_type: "file"
+      reason: "設定 YAML 内の収集ソース定義として保持する"
+      confidence: "user"
+    - entity_id: "E-005"
+      storage_type: "file"
+      reason: "設定 YAML 内の参照(環境変数参照 ${ENV_VAR} / 鍵ファイルパス)として保持する。平文も許容"
+      confidence: "user"
+    - entity_id: "E-006"
+      storage_type: "file"
+      reason: "Manifest と Archive のメタデータとして保持する(独立した永続ストアは持たない)"
+      confidence: "user"
+    - entity_id: "E-007"
+      storage_type: "file"
+      reason: "メッセージ別 JSON ファイル。配送イベント追記 + Subscription 別現在状態。外部 DB なしで冪等再開・監査を実現する"
+      confidence: "user"
+    - entity_id: "E-008"
+      storage_type: "file"
+      reason: "dlq/ ディレクトリへの隔離 + Manifest への dlq 記録"
+      confidence: "user"
+    - entity_id: "E-009"
+      storage_type: "file"
+      reason: "処理済み記録ファイル。copy 設定時の重複収集防止と再起動後の冪等再開に使う"
+      confidence: "user"
+    - entity_id: "E-010"
+      storage_type: "file"
+      reason: "archive/{topic}/ 配下のファイル。再送・監査・障害復旧・差分比較の基盤"
+      confidence: "user"
+    - entity_id: "E-011"
+      storage_type: "file"
+      reason: "lock ファイル(プロセス情報 + 取得日時)。二重起動防止と stale 判定に使う"
+      confidence: "user"
+    - entity_id: "E-012"
+      storage_type: "cache"
+      reason: "インメモリ集計。/metrics で公開し永続化しない(再起動でリセット、外部監視基盤側で蓄積)"
+      confidence: "user"
+    - entity_id: "E-013"
+      storage_type: "file"
+      reason: "構造化ログ(stdout/ファイル)。保管 90 日目安"
+      confidence: "user"
+  diagram_mermaid: |
+    erDiagram
+      CONFIG ||--o{ TOPIC : "defines"
+      CONFIG ||--o{ SUBSCRIPTION : "defines"
+      CONFIG ||--o{ SOURCE : "defines"
+      CONFIG ||--o{ CREDENTIAL : "references"
+      SOURCE ||--o{ TOPIC : "feeds"
+      SOURCE }o--|| CREDENTIAL : "uses"
+      SOURCE ||--o{ PROCESSED : "records"
+      TOPIC ||--o{ SUBSCRIPTION : "has"
+      TOPIC ||--o{ MESSAGE : "collects"
+      TOPIC ||--|| METRICS : "measured_by"
+      MESSAGE ||--|| MANIFEST : "tracked_by"
+      MESSAGE ||--|| ARCHIVE_FILE : "archived_as"
+      MESSAGE ||--o| DLQ : "isolated_to"
+      MESSAGE ||--o{ LOG : "logged"
+      SUBSCRIPTION ||--o{ MANIFEST : "delivery_state"
+      SUBSCRIPTION ||--o{ LOG : "logged"
+      MANIFEST ||--o| DLQ : "records_dlq"
+      PROCESSED ||--|| MESSAGE : "corresponds"
+      LOCK {
+        string lock_holder_process_info
+        datetime acquired_at
+      }
