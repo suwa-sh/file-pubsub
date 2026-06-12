@@ -1,0 +1,1096 @@
+version: "1.0"
+event_id: "20260612_153353_nfr_initial_build"
+created_at: "2026-06-12T15:33:53"
+source: "初期構築 (trigger_event rdra:20260612_150425_initial_build)"
+
+model_system:
+  type: "model1"
+  reason: "社内システム間のファイル中継 IF で社会的影響は組織内に限定。単一インスタンス・HA なしの設計スコープとも整合(ユーザー確定)。"
+
+categories:
+  - id: "A"
+    name: "可用性"
+    subcategories:
+      - id: "A.1"
+        name: "継続性"
+        items:
+          - id: "A.1.1"
+            name: "運用スケジュール"
+            important: true
+            metrics:
+              - id: "A.1.1.1"
+                name: "運用時間（通常）"
+                important: true
+                grade: 4
+                grade_description: "若干の停止あり（9時〜翌8:55）= 24時間運用（計画停止あり）"
+                reason: "ユーザー指定: 24/7 常駐デーモンで計画停止を許容（graceful shutdown + 再開後の追いつき配信）"
+                source_model: "UC: デーモンを起動する / UC: デーモンをgraceful shutdownで停止する"
+                confidence: "user"
+              - id: "A.1.1.2"
+                name: "運用時間（特定日）"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+              - id: "A.1.1.3"
+                name: "計画停止の有無"
+                important: true
+                grade: 1
+                grade_description: "定期的に計画停止あり（月次等）"
+                reason: "モデルシステム1のデフォルト値を適用（計画停止を許容する運用方針と整合）"
+                confidence: "default"
+          - id: "A.1.2"
+            name: "サービス切替時間"
+            important: true
+            metrics:
+              - id: "A.1.2.1"
+                name: "サービス切替時間"
+                important: true
+                grade: 1
+                grade_description: "24時間未満（部品交換による復旧）"
+                reason: "モデルシステム1のデフォルト値を適用（単一インスタンス・HA なしのため切替先を持たない）"
+                confidence: "default"
+      - id: "A.2"
+        name: "耐障害性"
+        items:
+          - id: "A.2.1"
+            name: "サーバ"
+            important: false
+            metrics:
+              - id: "A.2.1.1"
+                name: "サーバ内の冗長化"
+                important: true
+                grade: 1
+                grade_description: "冗長化なし（再起動で復旧）"
+                reason: "ユーザー指定: 単一インスタンス前提・HA はスコープ外、再起動後は冪等に処理を再開する設計判断"
+                source_model: "UC: 冪等に処理を再開する / 条件: 二重起動防止"
+                confidence: "user"
+          - id: "A.2.2"
+            name: "端末"
+            important: false
+            metrics:
+              - id: "A.2.2.1"
+                name: "端末の冗長化"
+                important: false
+                grade: 1
+                grade_description: "冗長化なし"
+                reason: "ユーザー指定: 冗長化は Lv0〜1 非冗長の設計判断"
+                confidence: "user"
+          - id: "A.2.3"
+            name: "ネットワーク機器"
+            important: false
+            metrics:
+              - id: "A.2.3.1"
+                name: "ネットワーク機器の冗長化"
+                important: true
+                grade: 1
+                grade_description: "冗長化なし"
+                reason: "ユーザー指定: 冗長化は Lv0〜1 非冗長の設計判断"
+                confidence: "user"
+          - id: "A.2.4"
+            name: "ネットワーク回線"
+            important: false
+            metrics:
+              - id: "A.2.4.1"
+                name: "回線の冗長化"
+                important: false
+                grade: 1
+                grade_description: "冗長化なし"
+                reason: "ユーザー指定: 冗長化は Lv0〜1 非冗長の設計判断"
+                confidence: "user"
+          - id: "A.2.5"
+            name: "ストレージ"
+            important: false
+            metrics:
+              - id: "A.2.5.1"
+                name: "ストレージの冗長化"
+                important: true
+                grade: 0
+                grade_description: "冗長化なし（ストレージ冗長化は導入先環境に委ねる）"
+                reason: "ユーザー指定: 冗長化は Lv0〜1 非冗長の設計判断"
+                confidence: "user"
+          - id: "A.2.6"
+            name: "建物・電源"
+            important: false
+            metrics:
+              - id: "A.2.6.1"
+                name: "建物の耐震・免震"
+                important: false
+                grade: 1
+                grade_description: "一般建築基準"
+                reason: "モデルシステム1のデフォルト値を適用（オンプレミスの設置環境は導入先に依存）"
+                confidence: "default"
+              - id: "A.2.6.2"
+                name: "電源の冗長化"
+                important: true
+                grade: 1
+                grade_description: "冗長化なし"
+                reason: "ユーザー指定: 冗長化は Lv0〜1 非冗長の設計判断"
+                confidence: "user"
+      - id: "A.3"
+        name: "災害対策"
+        items:
+          - id: "A.3.1"
+            name: "災害対策"
+            important: false
+            metrics:
+              - id: "A.3.1.1"
+                name: "災害対策の範囲"
+                important: true
+                grade: 0
+                grade_description: "対策なし"
+                reason: "ユーザー指定: 災害対策なし、復旧は Archive + Replay で代替"
+                source_model: "UC: 再送(Replay)を実行する / 情報: Archiveファイル"
+                confidence: "user"
+              - id: "A.3.1.2"
+                name: "業務継続の要否"
+                important: true
+                grade: 0
+                grade_description: "業務継続不要"
+                reason: "モデルシステム1のデフォルト値を適用（災害対策なしの方針と整合）"
+                confidence: "default"
+      - id: "A.4"
+        name: "回復性"
+        items:
+          - id: "A.4.1"
+            name: "目標復旧水準"
+            important: false
+            metrics:
+              - id: "A.4.1.1"
+                name: "RPO（目標復旧地点）"
+                important: true
+                grade: 4
+                grade_description: "データ損失なし"
+                reason: "ユーザー指定: 元ファイル DELETE は Archive 保存後に限定し、Manifest で配送状態を追跡するため損失なし"
+                source_model: "条件: Archive保存必須 / 情報: Manifest"
+                confidence: "user"
+              - id: "A.4.1.2"
+                name: "RTO（目標復旧時間）"
+                important: true
+                grade: 2
+                grade_description: "半日以内（数時間以内を目標）"
+                reason: "ユーザー指定: 兼務運用で再起動 + Replay による追いつき配信により数時間以内に復旧"
+                source_model: "UC: 冪等に処理を再開する / UC: 再送(Replay)を実行する"
+                confidence: "user"
+              - id: "A.4.1.3"
+                name: "RLO（目標復旧レベル）"
+                important: false
+                grade: 1
+                grade_description: "縮退運転（主要機能のみ）"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+  - id: "B"
+    name: "性能・拡張性"
+    subcategories:
+      - id: "B.1"
+        name: "業務処理量"
+        items:
+          - id: "B.1.1"
+            name: "通常時の業務量"
+            important: false
+            metrics:
+              - id: "B.1.1.1"
+                name: "同時アクセス数"
+                important: true
+                grade: 1
+                grade_description: "〜100"
+                reason: "ユーザー指定: 画面なしでオンライン応答系は対象外（HTTP アクセスは /healthz・/metrics の監視ポーリングのみ）"
+                source_model: "UC: /healthzと/metricsをHTTPで公開する"
+                confidence: "user"
+              - id: "B.1.1.2"
+                name: "データ量"
+                important: false
+                grade: 1
+                grade_description: "Archive 保持 〜数十GB（retention 〜90日）"
+                reason: "ユーザー指定: 〜50 topic・数千ファイル/日、ファイルサイズ数十MB中心・最大500MB、Archive 保持 〜数十GB"
+                source_model: "情報: Archiveファイル / 条件: Archive保持期間"
+                confidence: "user"
+              - id: "B.1.1.3"
+                name: "オンラインリクエスト件数"
+                important: true
+                grade: 1
+                grade_description: "〜1,000件/日"
+                reason: "ユーザー指定: オンライン応答系は対象外（オンラインリクエストは監視エンドポイントのみ）"
+                confidence: "user"
+              - id: "B.1.1.4"
+                name: "バッチ処理件数"
+                important: false
+                grade: 1
+                grade_description: "数千ファイル/日（〜50 topic、数十MB中心・最大500MB）"
+                reason: "ユーザー指定: 処理量は数千ファイル/日のバッチ/常駐処理中心"
+                source_model: "UC: ファイルを収集する(Collect) / UC: Subscriptionへ複製配信する(Fan-out)"
+                confidence: "user"
+          - id: "B.1.2"
+            name: "ピーク時の業務量"
+            important: false
+            metrics:
+              - id: "B.1.2.1"
+                name: "ピーク時同時アクセス数"
+                important: true
+                grade: 1
+                grade_description: "通常時の1.5倍"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+              - id: "B.1.2.2"
+                name: "ピーク時データ量"
+                important: false
+                grade: 1
+                grade_description: "通常時の1.5倍程度"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+      - id: "B.2"
+        name: "性能目標値"
+        items:
+          - id: "B.2.1"
+            name: "オンライン"
+            important: false
+            metrics:
+              - id: "B.2.1.1"
+                name: "レスポンスタイム"
+                important: true
+                grade: 2
+                grade_description: "10秒以内（オンライン応答系は対象外）"
+                reason: "ユーザー指定: 画面なしでオンライン応答系は対象外、監視エンドポイント応答は M1 デフォルト水準で十分"
+                confidence: "user"
+              - id: "B.2.1.2"
+                name: "スループット"
+                important: true
+                grade: 1
+                grade_description: "〜10 TPS（オンライン応答系は対象外）"
+                reason: "ユーザー指定: 画面なしでオンライン応答系は対象外"
+                confidence: "user"
+              - id: "B.2.1.3"
+                name: "ターンアラウンドタイム"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+          - id: "B.2.2"
+            name: "バッチ"
+            important: false
+            metrics:
+              - id: "B.2.2.1"
+                name: "バッチ処理時間"
+                important: true
+                grade: 1
+                grade_description: "翌営業日開始まで（ポーリング周期ごとの逐次処理）"
+                reason: "モデルシステム1のデフォルト値を適用（数千件/日の処理量に対し十分）"
+                confidence: "default"
+              - id: "B.2.2.2"
+                name: "バッチ処理量"
+                important: false
+                grade: 1
+                grade_description: "数千ファイル/日（数十MB中心・最大500MB、Archive 〜数十GB）"
+                reason: "ユーザー指定: 規模は〜50 topic・数千ファイル/日"
+                confidence: "user"
+      - id: "B.3"
+        name: "リソース拡張性"
+        items:
+          - id: "B.3.1"
+            name: "CPU"
+            important: false
+            metrics:
+              - id: "B.3.1.1"
+                name: "CPU拡張性"
+                important: true
+                grade: 1
+                grade_description: "スケールアップ（CPU追加・交換）"
+                reason: "ユーザー指定: 拡張はスケールアップ（設定チューニング）方針"
+                confidence: "user"
+          - id: "B.3.2"
+            name: "メモリ"
+            important: false
+            metrics:
+              - id: "B.3.2.1"
+                name: "メモリ拡張性"
+                important: false
+                grade: 1
+                grade_description: "スケールアップ（メモリ増設）"
+                reason: "ユーザー指定: 拡張はスケールアップ（設定チューニング）方針"
+                confidence: "user"
+          - id: "B.3.3"
+            name: "ストレージ"
+            important: false
+            metrics:
+              - id: "B.3.3.1"
+                name: "ストレージ拡張性"
+                important: false
+                grade: 1
+                grade_description: "スケールアップ（ディスク増設、Archive 保持期間で容量制御）"
+                reason: "ユーザー指定: 拡張はスケールアップ方針（Archive retention 〜90日で容量を制御）"
+                source_model: "UC: 保持期間超過のArchiveを削除する / 条件: Archive保持期間"
+                confidence: "user"
+          - id: "B.3.4"
+            name: "ネットワーク"
+            important: false
+            metrics:
+              - id: "B.3.4.1"
+                name: "ネットワーク拡張性"
+                important: false
+                grade: 1
+                grade_description: "スケールアップ（帯域増強）"
+                reason: "ユーザー指定: 拡張はスケールアップ（設定チューニング）方針"
+                confidence: "user"
+      - id: "B.4"
+        name: "性能品質保証"
+        items:
+          - id: "B.4.1"
+            name: "性能テスト"
+            important: false
+            metrics:
+              - id: "B.4.1.1"
+                name: "性能テスト"
+                important: true
+                grade: 1
+                grade_description: "単体での性能テスト"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+  - id: "C"
+    name: "運用・保守性"
+    subcategories:
+      - id: "C.1"
+        name: "通常運用"
+        items:
+          - id: "C.1.1"
+            name: "運用時間"
+            important: false
+            metrics:
+              - id: "C.1.1.1"
+                name: "運用監視時間"
+                important: true
+                grade: 5
+                grade_description: "24時間監視（自動）"
+                reason: "ユーザー指定: /healthz・/metrics による外部監視基盤の 24h 自動監視（人対応は営業時間内・兼務）"
+                source_model: "外部システム: 監視基盤 / UC: /healthzと/metricsをHTTPで公開する"
+                confidence: "user"
+              - id: "C.1.1.2"
+                name: "バックアップ時間帯"
+                important: false
+                grade: 1
+                grade_description: "専用バックアップ時間帯なし（収集時に Archive へ即時保存）"
+                reason: "ユーザー指定: Archive 自体が再送基盤でありバックアップを兼ねる"
+                source_model: "条件: Archive保存必須 / UC: Archiveに保存する"
+                confidence: "user"
+              - id: "C.1.1.3"
+                name: "計画停止対応時間"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+          - id: "C.1.2"
+            name: "バックアップ"
+            important: false
+            metrics:
+              - id: "C.1.2.1"
+                name: "バックアップ方式"
+                important: true
+                grade: 1
+                grade_description: "Archive への収集時即時保存を実質バックアップとする（別途のバックアップ取得なし）"
+                reason: "ユーザー指定: バックアップは Archive 自体が再送基盤（設定ファイルは導入先運用）"
+                source_model: "情報: Archiveファイル / UC: Archiveに保存する"
+                confidence: "user"
+              - id: "C.1.2.2"
+                name: "バックアップ対象"
+                important: false
+                grade: 1
+                grade_description: "Archive ファイル + Manifest（配送履歴）。設定ファイルは導入先運用"
+                reason: "ユーザー指定: Archive が再送基盤、設定ファイルのバックアップは導入先運用"
+                source_model: "情報: Archiveファイル / 情報: Manifest"
+                confidence: "user"
+              - id: "C.1.2.3"
+                name: "バックアップ世代管理"
+                important: false
+                grade: 1
+                grade_description: "世代管理なし・Archive 保持期間 〜90日（retention 設定）"
+                reason: "ユーザー指定: Archive 保持 〜90日（retention 〜90日）と整合"
+                source_model: "条件: Archive保持期間 / UC: 保持期間超過のArchiveを削除する"
+                confidence: "user"
+          - id: "C.1.3"
+            name: "運用監視"
+            important: false
+            metrics:
+              - id: "C.1.3.1"
+                name: "監視範囲"
+                important: true
+                grade: 3
+                grade_description: "+アプリケーション監視（Topic 別メトリクス・滞留・DLQ 件数）"
+                reason: "ユーザー指定: /metrics による Topic 別異常検知までを監視範囲とする"
+                source_model: "情報: メトリクス / UC: 外部監視基盤でTopic別メトリクスを観測する"
+                confidence: "user"
+              - id: "C.1.3.2"
+                name: "監視方式"
+                important: false
+                grade: 1
+                grade_description: "エージェントレス外形監視（外部監視基盤が /healthz・/metrics を pull）"
+                reason: "ユーザー指定: 外部監視基盤による 24h 自動監視"
+                source_model: "イベント: 監視データ提供 / 外部システム: 監視基盤"
+                confidence: "user"
+              - id: "C.1.3.3"
+                name: "監視間隔"
+                important: false
+                grade: 0
+                grade_description: "規定なし（外部監視基盤の設定に依存）"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "C.2"
+        name: "保守運用"
+        items:
+          - id: "C.2.1"
+            name: "計画保守"
+            important: false
+            metrics:
+              - id: "C.2.1.1"
+                name: "計画保守の時間帯"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+              - id: "C.2.1.2"
+                name: "パッチ適用方針"
+                important: true
+                grade: 1
+                grade_description: "セキュリティパッチのみ随時"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+          - id: "C.2.2"
+            name: "ソフトウェア保守"
+            important: false
+            metrics:
+              - id: "C.2.2.1"
+                name: "ライフサイクル管理"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "C.3"
+        name: "障害時運用"
+        items:
+          - id: "C.3.1"
+            name: "障害検知"
+            important: false
+            metrics:
+              - id: "C.3.1.1"
+                name: "障害検知方式"
+                important: true
+                grade: 2
+                grade_description: "監視ツールによる検知（アラート通知）"
+                reason: "ユーザー指定: しきい値判定・アラート発報は外部監視基盤の責務"
+                source_model: "イベント: アラート通知 / 外部システム: 監視基盤"
+                confidence: "user"
+          - id: "C.3.2"
+            name: "障害通知"
+            important: false
+            metrics:
+              - id: "C.3.2.1"
+                name: "障害通知方式"
+                important: false
+                grade: 1
+                grade_description: "外部監視基盤からのアラート通知（人対応は営業時間内・兼務）"
+                reason: "ユーザー指定: 24h 自動監視 + 営業時間内の人対応（兼務）"
+                source_model: "イベント: アラート通知"
+                confidence: "user"
+          - id: "C.3.3"
+            name: "障害復旧"
+            important: false
+            metrics:
+              - id: "C.3.3.1"
+                name: "障害復旧方式"
+                important: false
+                grade: 1
+                grade_description: "デーモン再起動 + Archive からの再送(Replay)による復旧"
+                reason: "ユーザー指定: 再起動 + Replay で追いつき復旧（RTO 数時間以内と整合）"
+                source_model: "UC: 冪等に処理を再開する / UC: 再送(Replay)を実行する"
+                confidence: "user"
+      - id: "C.4"
+        name: "運用環境"
+        items:
+          - id: "C.4.1"
+            name: "テスト環境"
+            important: false
+            metrics:
+              - id: "C.4.1.1"
+                name: "テスト環境"
+                important: true
+                grade: 2
+                grade_description: "簡易テスト環境（docker compose の動作確認環境）"
+                reason: "UC「シングルバイナリ/Dockerイメージを配置する」に docker compose による収集〜配信の事前動作確認環境が定義されているため"
+                source_model: "UC: シングルバイナリ/Dockerイメージを配置する"
+                confidence: "high"
+          - id: "C.4.2"
+            name: "開発環境"
+            important: false
+            metrics:
+              - id: "C.4.2.1"
+                name: "開発環境"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "C.5"
+        name: "サポート体制"
+        items:
+          - id: "C.5.1"
+            name: "サポート時間"
+            important: false
+            metrics:
+              - id: "C.5.1.1"
+                name: "サポート時間"
+                important: true
+                grade: 1
+                grade_description: "営業時間内（9時〜17時）"
+                reason: "ユーザー指定: 人対応は営業時間内（兼務）"
+                source_model: "アクター: 運用者"
+                confidence: "user"
+          - id: "C.5.2"
+            name: "エスカレーション"
+            important: false
+            metrics:
+              - id: "C.5.2.1"
+                name: "エスカレーション体制"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "C.6"
+        name: "その他の運用管理方針"
+        items:
+          - id: "C.6.1"
+            name: "ログ管理"
+            important: false
+            metrics:
+              - id: "C.6.1.1"
+                name: "ログ保管期間"
+                important: true
+                grade: 2
+                grade_description: "3ヶ月（ログ・Manifest 保管 90日目安）"
+                reason: "ユーザー指定: ログ・Manifest 保管 90日目安（Archive retention 〜90日と整合）"
+                source_model: "情報: ログ / 情報: Manifest / 条件: Archive保持期間"
+                confidence: "user"
+              - id: "C.6.1.2"
+                name: "ログ種別"
+                important: false
+                grade: 1
+                grade_description: "構造化ログ（メッセージ・Subscription 単位の配信トレース）+ Manifest（配送履歴）"
+                reason: "ユーザー指定: 監査は Manifest + 構造化ログで行う"
+                source_model: "情報: ログ / UC: 構造化ログを調査する"
+                confidence: "user"
+  - id: "D"
+    name: "移行性"
+    subcategories:
+      - id: "D.1"
+        name: "移行時期"
+        items:
+          - id: "D.1.1"
+            name: "移行時期"
+            important: false
+            metrics:
+              - id: "D.1.1.1"
+                name: "移行時期"
+                important: false
+                grade: 0
+                grade_description: "移行なし（新規構築）"
+                reason: "ユーザー指定: 新規構築のため移行なし"
+                confidence: "user"
+      - id: "D.2"
+        name: "移行方式"
+        items:
+          - id: "D.2.1"
+            name: "移行方式"
+            important: false
+            metrics:
+              - id: "D.2.1.1"
+                name: "移行方式"
+                important: true
+                grade: 1
+                grade_description: "一括移行相当（システム自体は新規導入。Consumer 切替は Subscription 並行稼働機能で実施）"
+                reason: "ユーザー指定: レガシー IF からの切替は本システムの機能（Subscription 並行稼働）で行う"
+                source_model: "外部システム: Consumerシステム(Current) / 外部システム: Consumerシステム(Next)"
+                confidence: "user"
+      - id: "D.3"
+        name: "移行対象（機器）"
+        items:
+          - id: "D.3.1"
+            name: "移行対象機器"
+            important: false
+            metrics:
+              - id: "D.3.1.1"
+                name: "移行対象機器"
+                important: false
+                grade: 0
+                grade_description: "移行対象機器なし（新規構築）"
+                reason: "ユーザー指定: 新規構築・移行なし"
+                confidence: "user"
+              - id: "D.3.1.2"
+                name: "移行元環境の廃棄"
+                important: false
+                grade: 0
+                grade_description: "対象なし（レガシー IF の廃止判断は導入先運用）"
+                reason: "ユーザー指定: 新規構築・移行なし"
+                confidence: "user"
+      - id: "D.4"
+        name: "移行対象（データ）"
+        items:
+          - id: "D.4.1"
+            name: "移行データ"
+            important: false
+            metrics:
+              - id: "D.4.1.1"
+                name: "データ移行量"
+                important: true
+                grade: 1
+                grade_description: "〜100GB（実際には移行データなし）"
+                reason: "ユーザー指定: 新規構築のためデータ移行なし"
+                confidence: "user"
+              - id: "D.4.1.2"
+                name: "データ変換"
+                important: false
+                grade: 0
+                grade_description: "変換なし（ファイル内容に関知しない pass-through）"
+                reason: "ユーザー指定: 移行なし・pass-through 配信"
+                confidence: "user"
+              - id: "D.4.1.3"
+                name: "データクレンジング"
+                important: false
+                grade: 0
+                grade_description: "対象なし"
+                reason: "ユーザー指定: 移行データなし"
+                confidence: "user"
+      - id: "D.5"
+        name: "移行計画"
+        items:
+          - id: "D.5.1"
+            name: "移行計画"
+            important: false
+            metrics:
+              - id: "D.5.1.1"
+                name: "移行リハーサル"
+                important: true
+                grade: 0
+                grade_description: "リハーサルなし"
+                reason: "ユーザー指定: 移行なしのためリハーサル不要"
+                confidence: "user"
+              - id: "D.5.1.2"
+                name: "移行判定基準"
+                important: false
+                grade: 0
+                grade_description: "規定なし（Subscription 並行稼働の切替判断は導入先運用）"
+                reason: "ユーザー指定: 切替は本システム機能で実施し判定は導入先に委ねる"
+                confidence: "user"
+              - id: "D.5.1.3"
+                name: "切り戻し計画"
+                important: false
+                grade: 0
+                grade_description: "規定なし（Subscription 並行稼働により旧経路へ即時復帰可能）"
+                reason: "ユーザー指定: Subscription 並行稼働で切り戻しリスクを吸収"
+                source_model: "外部システム: Consumerシステム(Current)"
+                confidence: "user"
+  - id: "E"
+    name: "セキュリティ"
+    subcategories:
+      - id: "E.1"
+        name: "前提条件・制約条件"
+        items:
+          - id: "E.1.1"
+            name: "セキュリティポリシー"
+            important: false
+            metrics:
+              - id: "E.1.1.1"
+                name: "セキュリティポリシー"
+                important: true
+                grade: 1
+                grade_description: "簡易的なガイドラインあり（OSS 既定の方針。導入先ポリシー準拠は導入先責務）"
+                reason: "ユーザー指定: 規制対応なし・OSS 既定、規制対応は導入先責務"
+                confidence: "user"
+          - id: "E.1.2"
+            name: "セキュリティ関連法規"
+            important: false
+            metrics:
+              - id: "E.1.2.1"
+                name: "準拠すべき法規・基準"
+                important: false
+                grade: 0
+                grade_description: "規定なし（ファイル内容に関知しない pass-through、規制対応は導入先責務）"
+                reason: "ユーザー指定: 準拠すべき法規・基準への対応は導入先責務"
+                confidence: "user"
+      - id: "E.2"
+        name: "セキュリティリスク分析"
+        items:
+          - id: "E.2.1"
+            name: "リスク分析"
+            important: false
+            metrics:
+              - id: "E.2.1.1"
+                name: "セキュリティリスク分析"
+                important: true
+                grade: 1
+                grade_description: "簡易チェックリストによる確認"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+      - id: "E.3"
+        name: "セキュリティ診断"
+        items:
+          - id: "E.3.1"
+            name: "セキュリティ診断"
+            important: false
+            metrics:
+              - id: "E.3.1.1"
+                name: "セキュリティ診断"
+                important: true
+                grade: 0
+                grade_description: "診断なし"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+      - id: "E.4"
+        name: "セキュリティリスク管理"
+        items:
+          - id: "E.4.1"
+            name: "リスク管理"
+            important: false
+            metrics:
+              - id: "E.4.1.1"
+                name: "リスク管理プロセス"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "E.5"
+        name: "アクセス・利用制限"
+        items:
+          - id: "E.5.1"
+            name: "認証"
+            important: false
+            metrics:
+              - id: "E.5.1.1"
+                name: "認証方式"
+                important: true
+                grade: 1
+                grade_description: "ID/パスワード認証（収集元認証は鍵ファイル/環境変数参照を推奨、平文許容）"
+                reason: "ユーザー指定: 収集元認証は鍵/環境変数推奨・平文許容"
+                source_model: "情報: 認証情報 / UC: Topic・Subscriptionを設定する"
+                confidence: "user"
+          - id: "E.5.2"
+            name: "アクセス制御"
+            important: false
+            metrics:
+              - id: "E.5.2.1"
+                name: "アクセス制御"
+                important: true
+                grade: 1
+                grade_description: "ユーザ単位の制御（OS のファイル権限・実行ユーザに依存）"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+          - id: "E.5.3"
+            name: "利用制限"
+            important: false
+            metrics:
+              - id: "E.5.3.1"
+                name: "利用制限"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "E.6"
+        name: "データ秘匿"
+        items:
+          - id: "E.6.1"
+            name: "暗号化"
+            important: false
+            metrics:
+              - id: "E.6.1.1"
+                name: "データ暗号化（保管時）"
+                important: true
+                grade: 0
+                grade_description: "暗号化なし"
+                reason: "ユーザー指定: 保管時暗号化なし"
+                confidence: "user"
+              - id: "E.6.1.2"
+                name: "データ暗号化（通信時）"
+                important: true
+                grade: 1
+                grade_description: "一部通信のみ暗号化（収集経路は SFTP/SCP で暗号化可、FTP はレガシー互換で平文許容）"
+                reason: "ユーザー指定: 通信暗号化は SFTP/SCP あり・FTP はレガシー互換で平文許容"
+                source_model: "情報: 収集ソース"
+                confidence: "user"
+          - id: "E.6.2"
+            name: "データマスキング"
+            important: false
+            metrics:
+              - id: "E.6.2.1"
+                name: "データマスキング"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "E.7"
+        name: "不正追跡・監視"
+        items:
+          - id: "E.7.1"
+            name: "監査ログ"
+            important: false
+            metrics:
+              - id: "E.7.1.1"
+                name: "監査ログ"
+                important: true
+                grade: 2
+                grade_description: "+データアクセスログ相当（Manifest による配送記録 + 構造化ログ）"
+                reason: "ユーザー指定: 監査は Manifest + 構造化ログで行う"
+                source_model: "情報: Manifest / UC: statusコマンドで配送状態を確認する"
+                confidence: "user"
+          - id: "E.7.2"
+            name: "不正監視"
+            important: false
+            metrics:
+              - id: "E.7.2.1"
+                name: "不正監視"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "E.8"
+        name: "ネットワーク対策"
+        items:
+          - id: "E.8.1"
+            name: "ファイアウォール"
+            important: false
+            metrics:
+              - id: "E.8.1.1"
+                name: "ファイアウォール"
+                important: true
+                grade: 1
+                grade_description: "パケットフィルタリング"
+                reason: "モデルシステム1のデフォルト値を適用（ネットワーク対策は導入先環境に依存）"
+                confidence: "default"
+          - id: "E.8.2"
+            name: "IDS/IPS"
+            important: false
+            metrics:
+              - id: "E.8.2.1"
+                name: "IDS/IPS"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+          - id: "E.8.3"
+            name: "ネットワーク分離"
+            important: false
+            metrics:
+              - id: "E.8.3.1"
+                name: "ネットワーク分離"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "E.9"
+        name: "マルウェア対策"
+        items:
+          - id: "E.9.1"
+            name: "マルウェア対策"
+            important: false
+            metrics:
+              - id: "E.9.1.1"
+                name: "マルウェア対策"
+                important: true
+                grade: 1
+                grade_description: "ウイルス対策ソフト導入"
+                reason: "モデルシステム1のデフォルト値を適用（導入先サーバの標準対策に依存）"
+                confidence: "default"
+      - id: "E.10"
+        name: "Web対策"
+        items:
+          - id: "E.10.1"
+            name: "WAF"
+            important: false
+            metrics:
+              - id: "E.10.1.1"
+                name: "WAF"
+                important: true
+                grade: 0
+                grade_description: "WAFなし"
+                reason: "モデルシステム1のデフォルト値を適用（Web UI なし、HTTP は監視エンドポイントのみ）"
+                confidence: "default"
+          - id: "E.10.2"
+            name: "Webアプリケーション対策"
+            important: false
+            metrics:
+              - id: "E.10.2.1"
+                name: "Webアプリケーション対策"
+                important: false
+                grade: 0
+                grade_description: "規定なし（Web UI なし）"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "E.11"
+        name: "セキュリティインシデント対応"
+        items:
+          - id: "E.11.1"
+            name: "インシデント対応"
+            important: false
+            metrics:
+              - id: "E.11.1.1"
+                name: "インシデント対応計画"
+                important: true
+                grade: 1
+                grade_description: "基本的な連絡体制のみ"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+  - id: "F"
+    name: "システム環境・エコロジー"
+    subcategories:
+      - id: "F.1"
+        name: "システム制約・前提条件"
+        items:
+          - id: "F.1.1"
+            name: "システム制約"
+            important: false
+            metrics:
+              - id: "F.1.1.1"
+                name: "対応OS"
+                important: true
+                grade: 2
+                grade_description: "主要2-3 OS対応（Linux 主対象 + macOS）"
+                reason: "ユーザー指定: Linux 主対象 + macOS、Docker コンテナ対応"
+                source_model: "UC: シングルバイナリ/Dockerイメージを配置する"
+                confidence: "user"
+              - id: "F.1.1.2"
+                name: "対応ブラウザ"
+                important: true
+                grade: 0
+                grade_description: "対象外（Web UI なし）"
+                reason: "ユーザー指定: Web UI なしのためブラウザ要件なし"
+                confidence: "user"
+              - id: "F.1.1.3"
+                name: "対応デバイス"
+                important: false
+                grade: 0
+                grade_description: "規定なし（サーバ常駐デーモンのみ、クライアントデバイスなし）"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+          - id: "F.1.2"
+            name: "ネットワーク制約"
+            important: false
+            metrics:
+              - id: "F.1.2.1"
+                name: "通信プロトコル"
+                important: false
+                grade: 1
+                grade_description: "FTP / SFTP / SCP（収集）+ HTTP（/healthz・/metrics 公開）"
+                reason: "ユーザー指定: 収集ソースは FTP/SFTP/SCP/ローカル、監視エンドポイントは HTTP 公開"
+                source_model: "情報: 収集ソース / UC: /healthzと/metricsをHTTPで公開する"
+                confidence: "user"
+              - id: "F.1.2.2"
+                name: "帯域要件"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "F.2"
+        name: "システム特性"
+        items:
+          - id: "F.2.1"
+            name: "可搬性"
+            important: false
+            metrics:
+              - id: "F.2.1.1"
+                name: "可搬性"
+                important: false
+                grade: 3
+                grade_description: "クラウド/オンプレ間移行可能（Go シングルバイナリ + Docker イメージで環境非依存）"
+                reason: "ユーザー指定: Go シングルバイナリ・Docker コンテナ対応・オンプレミス主対象"
+                source_model: "UC: シングルバイナリ/Dockerイメージを配置する"
+                confidence: "user"
+          - id: "F.2.2"
+            name: "拡張性"
+            important: false
+            metrics:
+              - id: "F.2.2.1"
+                name: "アーキテクチャ拡張性"
+                important: false
+                grade: 1
+                grade_description: "単一プロセス構成（Topic / Subscription は YAML 設定追加で拡張、性能拡張はスケールアップ）"
+                reason: "ユーザー指定: 拡張はスケールアップ（設定チューニング）方針"
+                source_model: "UC: Topic・Subscriptionを設定する"
+                confidence: "user"
+      - id: "F.3"
+        name: "適合規格"
+        items:
+          - id: "F.3.1"
+            name: "適合規格"
+            important: false
+            metrics:
+              - id: "F.3.1.1"
+                name: "業界標準・規格"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+              - id: "F.3.1.2"
+                name: "アクセシビリティ"
+                important: false
+                grade: 0
+                grade_description: "対象外（Web UI なし）"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "F.4"
+        name: "機材設置環境条件"
+        items:
+          - id: "F.4.1"
+            name: "設置環境"
+            important: false
+            metrics:
+              - id: "F.4.1.1"
+                name: "耐震クラス"
+                important: false
+                grade: 1
+                grade_description: "一般オフィス"
+                reason: "モデルシステム1のデフォルト値を適用（オンプレミスの設置環境は導入先に依存）"
+                confidence: "default"
+              - id: "F.4.1.2"
+                name: "空調・温度管理"
+                important: false
+                grade: 0
+                grade_description: "規定なし（導入先環境に依存）"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+              - id: "F.4.1.3"
+                name: "物理セキュリティ"
+                important: false
+                grade: 0
+                grade_description: "規定なし（導入先環境に依存）"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"
+      - id: "F.5"
+        name: "環境マネージメント"
+        items:
+          - id: "F.5.1"
+            name: "環境対策"
+            important: false
+            metrics:
+              - id: "F.5.1.1"
+                name: "CO2排出量"
+                important: false
+                grade: 0
+                grade_description: "考慮なし"
+                reason: "モデルシステム1のデフォルト値を適用"
+                confidence: "default"
+              - id: "F.5.1.2"
+                name: "廃棄物・リサイクル"
+                important: false
+                grade: 0
+                grade_description: "規定なし"
+                reason: "モデルシステム1のデフォルト値を適用（カタログにレベル定義なし）"
+                confidence: "default"

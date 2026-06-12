@@ -1,0 +1,8 @@
+RDRA モデルからの初期 NFR グレード構築 (初期構築モード・完全版)
+
+- trigger_event: rdra:20260612_150425_initial_build
+- 対象システム: file-pubsub (FTP GET/DELETE 型レガシーファイル IF を Pub/Sub 風配信モデルへ変換する Go シングルバイナリの常駐デーモン。Web UI なし、Prometheus /metrics + /healthz 公開)
+- モデルシステム: model1 (社内システム間のファイル中継 IF で社会的影響は組織内に限定。単一インスタンス・HA なしの設計スコープとも整合。ユーザー確定)
+- デプロイ環境: オンプレミス (クラウド補正なし)
+- 規模: 〜50 topic・数千ファイル/日、ファイルサイズ 数十MB 中心・最大 500MB、Archive 保持 〜数十GB (retention 〜90日)
+- ユーザー対話で確定済みの NFR グレード情報 (可用性・冗長化・RPO/RTO・性能・運用・移行性・セキュリティ・環境) を反映し、明示されていないメトリクスにはモデルシステム1のデフォルト値 (confidence: "default") を適用した。
