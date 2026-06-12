@@ -1,0 +1,38 @@
+# file-pubsub 常駐デーモンの systemd unit サンプル。
+# 配置: /etc/systemd/system/file-pubsub.service
+# 前提: バイナリ /usr/local/bin/file-pubsub、設定 /etc/file-pubsub/config.yaml、
+#       データディレクトリ /var/lib/file-pubsub (config.yaml の data_dir に合わせる)
+[Unit]
+Description=file-pubsub - legacy file interface to Pub/Sub-style delivery bridge
+Documentation=https://github.com/suwa-sh/file-pubsub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=file-pubsub
+Group=file-pubsub
+ExecStart=/usr/local/bin/file-pubsub serve --config /etc/file-pubsub/config.yaml
+# 認証情報の環境変数 (${ENV_VAR} 参照) はここで渡す。例: SFTP_PASSWORD=...
+EnvironmentFile=-/etc/file-pubsub/env
+
+# graceful shutdown: SIGTERM 後、処理中サイクルの完了を待つ (大きいファイルがある場合は延ばす)
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+Restart=on-failure
+RestartSec=5
+
+# 多重起動はアプリ側の Lock でも防止されるが、unit でも単一インスタンスとする
+# (二重起動は exit 3 = 設定/環境起因のため再起動ループに入れない)
+RestartPreventExitStatus=3
+
+# ハードニング (必要に応じて調整)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/file-pubsub
+
+[Install]
+WantedBy=multi-user.target
