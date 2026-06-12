@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/jlaffaye/ftp v0.2.1
-	github.com/pkg/sftp v1.13.9
+	github.com/pkg/sftp v1.13.10
 	github.com/prometheus/client_golang v1.20.5
 	golang.org/x/crypto v0.53.0
 	gopkg.in/yaml.v3 v3.0.1
