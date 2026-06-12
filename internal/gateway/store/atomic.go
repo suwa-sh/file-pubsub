@@ -26,21 +26,21 @@ func WriteFileAtomic(dst string, r io.Reader, perm os.FileMode) error {
 		return fmt.Errorf("atomic write %s: %w", dst, err)
 	}
 	if _, err := io.Copy(f, r); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("atomic write %s: %w", dst, err)
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("atomic write %s: %w", dst, err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("atomic write %s: %w", dst, err)
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("atomic write %s: %w", dst, err)
 	}
 	return nil
@@ -62,7 +62,7 @@ func CopyFileAtomic(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return fmt.Errorf("copy %s to %s: %w", src, dst, err)

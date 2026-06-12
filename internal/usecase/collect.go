@@ -77,7 +77,7 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	files, err := conn.List(ctx)
 	if err != nil {
@@ -172,7 +172,7 @@ func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source
 		return fmt.Errorf("open fetched file: %w", err)
 	}
 	err = p.Archive.PutWork(t.Name, msg.MessageID, f)
-	f.Close()
+	_ = f.Close()
 	_ = os.Remove(local)
 	if err != nil {
 		return err

@@ -42,7 +42,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, usageText)
+		_, _ = fmt.Fprintln(stderr, usageText)
 		return exitUsage
 	}
 	switch args[0] {
@@ -56,10 +56,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if len(args) >= 2 && args[1] == "validate" {
 			return cmdConfigValidate(args[2:], stdout, stderr)
 		}
-		fmt.Fprintln(stderr, `unknown config subcommand. use "config validate --config <path>"`)
+		_, _ = fmt.Fprintln(stderr, `unknown config subcommand. use "config validate --config <path>"`)
 		return exitUsage
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n%s\n", args[0], usageText)
+		_, _ = fmt.Fprintf(stderr, "unknown command %q\n%s\n", args[0], usageText)
 		return exitUsage
 	}
 }
@@ -67,7 +67,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // loadConfig resolves --config; every failure here is exit code 2.
 func loadConfig(path string, stderr io.Writer) (*config.Config, bool) {
 	if path == "" {
-		fmt.Fprintln(stderr, "--config is required. specify the path of the single YAML config file")
+		_, _ = fmt.Fprintln(stderr, "--config is required. specify the path of the single YAML config file")
 		return nil, false
 	}
 	cfg, err := config.Load(path)
@@ -75,10 +75,10 @@ func loadConfig(path string, stderr io.Writer) (*config.Config, bool) {
 		var verrs config.ValidationErrors
 		if errors.As(err, &verrs) {
 			for _, v := range verrs {
-				fmt.Fprintln(stderr, v.Error())
+				_, _ = fmt.Fprintln(stderr, v.Error())
 			}
 		} else {
-			fmt.Fprintf(stderr, "load config %s failed: %v. check the path and the YAML syntax\n", path, err)
+			_, _ = fmt.Fprintf(stderr, "load config %s failed: %v. check the path and the YAML syntax\n", path, err)
 		}
 		return nil, false
 	}
@@ -105,10 +105,10 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	if err := daemon.Run(ctx); err != nil {
 		if errors.Is(err, store.ErrAlreadyLocked) {
-			fmt.Fprintf(stderr, "duplicate start: %v. the running daemon is untouched; stop it first if a restart is intended\n", err)
+			_, _ = fmt.Fprintf(stderr, "duplicate start: %v. the running daemon is untouched; stop it first if a restart is intended\n", err)
 			return exitDuplicate
 		}
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return exitRuntime
 	}
 	return exitOK
@@ -128,6 +128,6 @@ func cmdConfigValidate(args []string, stdout, stderr io.Writer) int {
 	for _, t := range cfg.Topics {
 		subs += len(t.Subscriptions)
 	}
-	fmt.Fprintf(stdout, "OK: topics=%d subscriptions=%d sources=%d\n", len(cfg.Topics), subs, len(cfg.Topics))
+	_, _ = fmt.Fprintf(stdout, "OK: topics=%d subscriptions=%d sources=%d\n", len(cfg.Topics), subs, len(cfg.Topics))
 	return exitOK
 }

@@ -54,7 +54,7 @@ func (l *Local) Fetch(ctx context.Context, name, destDir string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", name, err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	srcInfo, err := src.Stat()
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", name, err)
@@ -80,11 +80,11 @@ func (l *Local) Fetch(ctx context.Context, name, destDir string) (string, error)
 		err = fmt.Errorf("size mismatch: copied %d bytes, source has %d", written, srcInfo.Size())
 	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("fetch %s: %w", name, err)
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("fetch %s: %w", name, err)
 	}
 	return dst, nil

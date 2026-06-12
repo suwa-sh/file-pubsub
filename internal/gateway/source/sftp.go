@@ -146,7 +146,7 @@ func (c *SFTP) Fetch(ctx context.Context, name, destDir string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", name, err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	stat, err := src.Stat()
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", name, err)

@@ -24,7 +24,7 @@ func TestNew(t *testing.T) {
 		if fmt.Sprintf("%T", c) != fmt.Sprintf("%T", want) {
 			t.Errorf("New(%s) = %T, want %T", typ, c, want)
 		}
-		c.Close()
+		_ = c.Close()
 	}
 	if _, err := New(Options{Type: "bogus"}); err == nil {
 		t.Error("unknown type must fail")

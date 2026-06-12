@@ -75,13 +75,13 @@ func (l *LockManager) create(pid int, now time.Time) error {
 	}
 	data := fmt.Sprintf("{\"pid\": %d, \"acquired_at\": %q}\n", pid, now.Format(time.RFC3339))
 	if _, err := f.WriteString(data); err != nil {
-		f.Close()
-		os.Remove(l.path)
+		_ = f.Close()
+		_ = os.Remove(l.path)
 		return err
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(l.path)
+		_ = f.Close()
+		_ = os.Remove(l.path)
 		return err
 	}
 	return f.Close()

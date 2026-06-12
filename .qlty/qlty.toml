@@ -56,6 +56,14 @@ test_patterns = [
 [smells]
 mode = "comment"
 
+# radarlint のコードスメル (認知的複雑度・リテラル重複等) は助言扱いに降格する。
+# CI は `qlty check --fail-level medium` で実行し、medium 以上 (errcheck・security・hadolint 等) だけを fail にする。
+[[triage]]
+[triage.match]
+plugins = ["radarlint-go", "radarlint-iac"]
+[triage.set]
+level = "low"
+
 [[source]]
 name = "default"
 default = true

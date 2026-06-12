@@ -48,11 +48,11 @@ func writeTempAndRename(name, destDir string, src io.Reader, want int64, finish 
 		err = fmt.Errorf("size mismatch: copied %d bytes, source has %d", written, want)
 	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	return dst, nil

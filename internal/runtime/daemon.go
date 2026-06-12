@@ -80,7 +80,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for _, t := range d.Cfg.Topics {
 		subs += len(t.Subscriptions)
 	}
-	fmt.Fprintf(d.Stdout, "file-pubsub serve: lock acquired (pid %d), topics=%d subscriptions=%d, metrics on :%d, polling every %ds\n",
+	_, _ = fmt.Fprintf(d.Stdout, "file-pubsub serve: lock acquired (pid %d), topics=%d subscriptions=%d, metrics on :%d, polling every %ds\n",
 		os.Getpid(), len(d.Cfg.Topics), subs, d.Cfg.MetricsPort, d.Cfg.PollingInterval)
 	d.Log.Emit(logging.Event{EventType: "startup"})
 

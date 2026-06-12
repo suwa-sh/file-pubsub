@@ -30,18 +30,18 @@ func cmdReplay(args []string, stdout, stderr io.Writer) int {
 	params := usecase.ReplayParams{Topic: *topic, MessageID: *messageID, Subscription: *subscription}
 	var err error
 	if params.From, err = parseDate(*from); err != nil {
-		fmt.Fprintf(stderr, "--from %q is not a date: use the YYYY-MM-DD form\n", *from)
+		_, _ = fmt.Fprintf(stderr, "--from %q is not a date: use the YYYY-MM-DD form\n", *from)
 		return exitUsage
 	}
 	if params.To, err = parseDate(*to); err != nil {
-		fmt.Fprintf(stderr, "--to %q is not a date: use the YYYY-MM-DD form\n", *to)
+		_, _ = fmt.Fprintf(stderr, "--to %q is not a date: use the YYYY-MM-DD form\n", *to)
 		return exitUsage
 	}
 
 	pipe := usecase.NewPipeline(cfg, logging.New(stderr), nil)
 	count, err := pipe.Replay(context.Background(), params)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		var usage usecase.UsageError
 		if errors.As(err, &usage) {
 			return exitUsage
@@ -53,8 +53,8 @@ func cmdReplay(args []string, stdout, stderr io.Writer) int {
 	if params.MessageID == "" {
 		target = fmt.Sprintf("period: %s..%s", params.From.Format("2006-01-02"), params.To.Format("2006-01-02"))
 	}
-	fmt.Fprintf(stdout, "replay completed\ntopic: %s\n%s\nsubscription: %s\nreplayed: %d\n", params.Topic, target, params.Subscription, count)
-	fmt.Fprintln(stdout, "the replay history is recorded in the manifest; check it with the status command")
+	_, _ = fmt.Fprintf(stdout, "replay completed\ntopic: %s\n%s\nsubscription: %s\nreplayed: %d\n", params.Topic, target, params.Subscription, count)
+	_, _ = fmt.Fprintln(stdout, "the replay history is recorded in the manifest; check it with the status command")
 	return exitOK
 }
 

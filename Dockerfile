@@ -8,7 +8,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/file-pubsub ./cmd/file-pubsub
 
-FROM gcr.io/distroless/static-debian12:latest
+FROM gcr.io/distroless/static-debian12:latest@sha256:9c346e4be81b5ca7ff31a0d89eaeade58b0f95cfd3baed1f36083ddb47ca3160
 COPY --from=build /out/file-pubsub /usr/local/bin/file-pubsub
 ENTRYPOINT ["/usr/local/bin/file-pubsub"]
 CMD ["serve", "--config", "/etc/file-pubsub/config.yaml"]

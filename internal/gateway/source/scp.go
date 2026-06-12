@@ -52,7 +52,7 @@ func (c *SCP) run(cmd string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open ssh session: %w", err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	var stdout, stderr bytes.Buffer
 	sess.Stdout = &stdout
 	sess.Stderr = &stderr
@@ -144,7 +144,7 @@ func (c *SCP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: open ssh session: %w", name, err)
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	var stderr bytes.Buffer
 	sess.Stderr = &stderr
 	stdout, err := sess.StdoutPipe()

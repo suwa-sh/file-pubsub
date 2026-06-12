@@ -32,7 +32,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if msg := validateStatusArgs(cfg, *topic, *subscription, *status); msg != "" {
-		fmt.Fprintln(stderr, msg)
+		_, _ = fmt.Fprintln(stderr, msg)
 		return exitUsage
 	}
 
@@ -40,7 +40,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 	if *status == "dlq" && *subscription == "" {
 		metas, err := pipe.DLQList(*topic)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return exitRuntime
 		}
 		renderDLQTable(stdout, metas)
@@ -49,7 +49,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) int {
 
 	rows, err := pipe.StatusRows(usecase.StatusFilter{Topic: *topic, Subscription: *subscription, Status: *status})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return exitRuntime
 	}
 	renderStatusTable(stdout, rows)
@@ -103,40 +103,40 @@ func formatTime(t *time.Time) string {
 
 func renderStatusTable(w io.Writer, rows []usecase.StatusRow) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "MESSAGE_ID\tTOPIC\tSUBSCRIPTION\tSTATUS\tRETRY\tDELIVERED_AT\tREPLAY")
+	_, _ = fmt.Fprintln(tw, "MESSAGE_ID\tTOPIC\tSUBSCRIPTION\tSTATUS\tRETRY\tDELIVERED_AT\tREPLAY")
 	for _, r := range rows {
 		replay := "-"
 		if r.Replay {
 			replay = "replay"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			r.MessageID, r.Topic, r.Subscription, r.Status, r.Retry, formatTime(r.DeliveredAt), replay)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	for _, s := range usecase.SummarizeStatus(rows) {
-		fmt.Fprintf(w, "%s/%s: delivered=%d failed=%d dlq=%d\n", s.Topic, s.Subscription, s.Delivered, s.Failed, s.DLQ)
+		_, _ = fmt.Fprintf(w, "%s/%s: delivered=%d failed=%d dlq=%d\n", s.Topic, s.Subscription, s.Delivered, s.Failed, s.DLQ)
 	}
 }
 
 func renderDLQTable(w io.Writer, metas []store.DLQMeta) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "MESSAGE_ID\tTOPIC\tISOLATION_REASON\tFAILURES\tISOLATED_AT")
+	_, _ = fmt.Fprintln(tw, "MESSAGE_ID\tTOPIC\tISOLATION_REASON\tFAILURES\tISOLATED_AT")
 	counts := map[string]int{}
 	var topics []string
 	for _, m := range metas {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
 			m.MessageID, m.Topic, m.IsolationReason, m.FailureCount, m.IsolatedAt.Format(time.RFC3339))
 		if counts[m.Topic] == 0 {
 			topics = append(topics, m.Topic)
 		}
 		counts[m.Topic]++
 	}
-	tw.Flush()
+	_ = tw.Flush()
 
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	for _, t := range topics {
-		fmt.Fprintf(w, "%s: dlq=%d\n", t, counts[t])
+		_, _ = fmt.Fprintf(w, "%s: dlq=%d\n", t, counts[t])
 	}
 }

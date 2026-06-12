@@ -46,7 +46,7 @@ jobs:
           curl -fsSL https://qlty.sh | bash
           echo "$HOME/.qlty/bin" >> "$GITHUB_PATH"
       - name: qlty check
-        run: qlty check --all --no-progress --no-formatters
+        run: qlty check --all --no-progress --no-formatters --fail-level medium
 
   goreleaser-check:
     runs-on: ubuntu-latest

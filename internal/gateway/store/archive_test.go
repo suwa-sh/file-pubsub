@@ -34,7 +34,7 @@ func TestArchiveStore_PutWorkAndPromote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	data, _ := io.ReadAll(r)
 	if string(data) != "payload" {
 		t.Errorf("archive content = %q", data)

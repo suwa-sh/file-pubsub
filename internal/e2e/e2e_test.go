@@ -148,7 +148,7 @@ func freePort(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
@@ -172,7 +172,7 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 	lg := logging.New(logFile)
 	metrics := metricsreg.New()
 	pipe := usecase.NewPipeline(f.cfg, lg, metrics)
@@ -188,7 +188,7 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
 	})
 
@@ -212,7 +212,7 @@ func TestDaemonGracefulShutdown(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, err := io.ReadAll(resp.Body)
 		return err == nil && strings.Contains(string(body), `file_pubsub_processed_total{topic="orders"} 1`)
 	})
