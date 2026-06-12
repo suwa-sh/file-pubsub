@@ -39,9 +39,11 @@ flowchart LR
 |---|---|
 | **Topic** | Producer が出力する論理的なファイル種別 (orders / customers / invoices 等)。Topic ごとに収集ソースを設定する |
 | **Subscription** | Consumer ごとの配送先ディレクトリ (current / next / test 等)。配送は Subscription ごとに独立し、一方の取り込み・削除が他方に影響しない |
-| **Archive** | 収集した全ファイルを Topic 別に必ず保存する。再送 (Replay)・監査・障害復旧・差分比較の基盤。保持期間 (retention) を超えた分は安全に削除される |
+| **Archive** | 収集した全ファイルを Topic 別に必ず保存する。再送 (Replay)・監査・障害復旧・差分比較の基盤。配送が決着 (delivered / dlq) したメッセージの Archive を保持期間 (retention) 超過時に削除する。未決着 (failed / delivering / retrying) 分は削除しない |
 | **Fan-out** | Archive から各 Subscription ディレクトリへ複製する。一時名で書き込んでから rename する (Consumer が途中状態を読まない) |
-| **Manifest** | メッセージ (収集ファイル) ごとの message_id / topic / Subscription 別配送状態 (delivered / failed / dlq) の履歴。message_id は収集時刻 + Topic + 元ファイル名から採番し、同名ファイルの再出力も履歴を失わない |
+| **Manifest** | メッセージ (収集ファイル) ごとの message_id / topic / Subscription 別配送状態 (delivered / failed / dlq) の履歴。message_id は収集時刻 + Topic + 元ファイル名から採番し、同名ファイルの再出力も履歴を失わない。同名ファイルが別メッセージとして収集される条件: delete モードは収集ソースに存在するファイルを常に新メッセージとして収集する / copy モードは mtime またはサイズの変化が必要 (処理済みキーはファイル名 + mtime + サイズ) |
+
+Fan-out 配信は **at-least-once** です。クラッシュ後の再開などで同一ファイルが Subscription ディレクトリへ再配置されることがあるため、Consumer は同名ファイルの再取得を許容してください (従来の FTP 再送と同じ前提)。
 
 配信失敗はリトライし、規定回数を超えたら DLQ へ隔離して Manifest に記録します。メッセージの順序保証はしません (従来の FTP GET と同じく取り込み順序は Consumer の責任)。
 
@@ -122,7 +124,7 @@ docker compose down
 |---|---|
 | `serve --config <path>` | 常駐デーモンを起動。ポーリング収集 → Archive → Fan-out → リトライ/DLQ → retention を周期実行し、`/metrics`・`/healthz` を公開する。二重起動は Lock で防止 (stale lock からは自動回復)。SIGTERM/SIGINT で graceful shutdown (処理中サイクルを完了してから停止) |
 | `status --config <path> [--topic T] [--subscription S] [--status delivered\|failed\|dlq]` | Manifest から配送状況を一覧表示する。`--status dlq` (subscription 指定なし) は DLQ 隔離一覧 (隔離理由・失敗回数) を表示する |
-| `replay --config <path> --topic T (--from YYYY-MM-DD --to YYYY-MM-DD \| --message-id ID) --subscription S` | Archive から期間またはメッセージ指定で宛先 Subscription へ再送する。Replay も Manifest に記録される |
+| `replay --config <path> --topic T (--from YYYY-MM-DD --to YYYY-MM-DD \| --message-id ID) --subscription S` | Archive から期間またはメッセージ指定で宛先 Subscription へ再送する。Replay も Manifest に記録される。**serve 停止中に実行する**: serve と同じ Lock を取得して Manifest への二重書き込みを防止するため、serve 稼働中はエラー (終了コード 3) になる |
 | `config validate --config <path>` | 設定 YAML を検証し、全違反を「キーパス + 原因 + 対処」で報告する |
 
 終了コード:
@@ -141,7 +143,7 @@ docker compose down
 | キー | 必須 | 説明 |
 |---|---|---|
 | `polling_interval` | ✓ | ポーリング間隔 (秒)。前回サイクル完了を待ち多重実行しない |
-| `archive_retention` | ✓ | Archive 保持日数。超過分は安全に削除される |
+| `archive_retention` | ✓ | Archive 保持日数。配送が決着 (delivered / dlq) したメッセージのみ、超過分が削除される (未決着分は削除されず、スキップがログに記録される) |
 | `retry_max_count` | ✓ | 配信リトライ上限。超えたメッセージは DLQ へ隔離 |
 | `metrics_port` | ✓ | `/metrics`・`/healthz` の HTTP ポート |
 | `data_dir` | - | archive / manifest / work / dlq 等のデータルート。省略時は config.yaml のあるディレクトリ |
@@ -197,6 +199,7 @@ groups:
 
 - **FTP は平文です。** 認証情報もファイル内容も暗号化されずにネットワークを流れます。信頼できるネットワークセグメント内に限定し、サーバが対応していれば sftp を選んでください。
 - **SSH ホストキー検証は行いません (sftp / scp)。** 設定スキーマにホストキー情報を持たないため、接続時は `InsecureIgnoreHostKey` 相当で受け入れます。経路上の中間者が収集元サーバになりすませるリスクがあるため、file-pubsub は収集元と同じ信頼できるネットワーク内で稼働させてください。
+- **SCP コネクタの前提。** SCP はリモートでシェルコマンド (find / stat / cat / rm) を実行するため、接続ユーザにシェルが必要で、サーバ側に GNU coreutils の `stat` (`stat -c`。BSD 系非互換) を要求します。改行を含むファイル名には対応しません。サーバが対応していれば SFTP を推奨します。
 - **認証情報は `${ENV_VAR}` 参照と鍵ファイルを推奨します。** YAML への平文記述は許容されますが、設定ファイルの取り扱いに注意してください。
 - **ファイル内容は pass-through です。** file-pubsub は内容を解釈・変換・暗号化しません。個人情報等を含むファイルの暗号化・マスキング・規制対応は導入先の責務です。
 - アクセス制御は OS のファイル権限・実行ユーザに依存します。データディレクトリと Subscription ディレクトリの権限を適切に設定してください。

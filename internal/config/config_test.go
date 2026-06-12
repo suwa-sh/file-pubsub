@@ -163,6 +163,12 @@ func TestValidate_Violations(t *testing.T) {
 		keyPath string
 	}{
 		{"duplicate topic name", func(c *Config) { c.Topics[1].Name = "orders" }, "topics[1].name"},
+		{"topic name with path separator", func(c *Config) { c.Topics[0].Name = "a/b" }, "topics[0].name"},
+		{"topic name dot-dot", func(c *Config) { c.Topics[0].Name = ".." }, "topics[0].name"},
+		{"topic name single dot", func(c *Config) { c.Topics[0].Name = "." }, "topics[0].name"},
+		{"topic name with backslash", func(c *Config) { c.Topics[0].Name = `a\b` }, "topics[0].name"},
+		{"subscription name with path separator", func(c *Config) { c.Topics[0].Subscriptions[0].Name = "../escape" }, "topics[0].subscriptions[0].name"},
+		{"subscription name dot-dot", func(c *Config) { c.Topics[0].Subscriptions[0].Name = ".." }, "topics[0].subscriptions[0].name"},
 		{"duplicate subscription name", func(c *Config) { c.Topics[0].Subscriptions[1].Name = "current" }, "topics[0].subscriptions[1].name"},
 		{"missing subscription directory", func(c *Config) { c.Topics[0].Subscriptions[0].Directory = "" }, "topics[0].subscriptions[0].directory"},
 		{"missing source directory", func(c *Config) { c.Topics[0].Source.Directory = "" }, "topics[0].source.directory"},
@@ -198,6 +204,15 @@ func TestValidate_Violations(t *testing.T) {
 func TestValidate_OK(t *testing.T) {
 	if verrs := Validate(baseConfig()); len(verrs) != 0 {
 		t.Errorf("valid config must pass, got %v", verrs)
+	}
+}
+
+func TestValidate_SafeNameCharactersAccepted(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Topics[0].Name = "orders.v2_x-1"
+	cfg.Topics[0].Subscriptions[0].Name = "current-01.test_a"
+	if verrs := Validate(cfg); len(verrs) != 0 {
+		t.Errorf("letters, digits, dot, underscore and hyphen must be accepted, got %v", verrs)
 	}
 }
 

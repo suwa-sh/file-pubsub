@@ -14,6 +14,12 @@ import (
 // subscriptions are redelivered from the archive; beyond it the message is
 // isolated to dlq/{topic}/{message_id} (+ .meta.json) and excluded from
 // automatic redelivery (SR-004; replay is the only way back).
+//
+// Messages already in the retrying state are picked up too: a crash right
+// after the failed → retrying manifest write would otherwise leave the
+// message stuck forever. Re-entry is safe because redelivery skips delivered
+// subscriptions via the manifest (SR-003) and DLQStore.Isolate overwrites the
+// same dlq paths idempotently.
 func (p *Pipeline) Retry(ctx context.Context) {
 	manifests, err := p.Manifests.List()
 	if err != nil {
@@ -24,7 +30,7 @@ func (p *Pipeline) Retry(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if m.Status != domain.StatusFailed {
+		if m.Status != domain.StatusFailed && m.Status != domain.StatusRetrying {
 			continue
 		}
 		t := p.findTopic(m.Topic)
@@ -33,10 +39,12 @@ func (p *Pipeline) Retry(ctx context.Context) {
 			continue
 		}
 
-		m.Status = domain.StatusRetrying
-		if err := p.Manifests.Put(m); err != nil {
-			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
-			continue
+		if m.Status == domain.StatusFailed {
+			m.Status = domain.StatusRetrying
+			if err := p.Manifests.Put(m); err != nil {
+				p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
+				continue
+			}
 		}
 
 		if domain.ShouldIsolate(m.RetryCount, p.Cfg.RetryMaxCount) {
@@ -63,6 +71,8 @@ func (p *Pipeline) Retry(ctx context.Context) {
 
 // isolateToDLQ copies the archive file into the DLQ with its isolation meta,
 // marks every failed subscription dlq and finishes the message as dlq.
+// DLQStore.Isolate overwrites the same dlq paths, so re-running for a message
+// stuck in retrying (crash recovery) never double-isolates.
 func (p *Pipeline) isolateToDLQ(m *store.Manifest, t *config.Topic) {
 	now := p.now()
 	var failedSubs []string

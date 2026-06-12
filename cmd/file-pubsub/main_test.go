@@ -270,6 +270,40 @@ func TestReplayPlacesAndSummarizes(t *testing.T) {
 	}
 }
 
+// TestReplayRequiresDataDirLock guards the single-writer rule: replay must
+// refuse to run (exit 3) while serve holds the data-dir lock, and succeed
+// once the lock is free.
+func TestReplayRequiresDataDirLock(t *testing.T) {
+	cfgPath, dataDir := writeConfig(t)
+	args := []string{"replay", "--config", cfgPath, "--topic", "orders",
+		"--from", "2026-04-01", "--to", "2026-04-30", "--subscription", "next"}
+
+	// A live holder (this test process) simulates a running serve.
+	lock := store.NewLockManager(dataDir)
+	if err := lock.Acquire(os.Getpid(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, args...)
+	if code != exitDuplicate {
+		t.Fatalf("exit = %d (stderr %q), want %d while the lock is held", code, stderr, exitDuplicate)
+	}
+	if !strings.Contains(stderr, "serve is running") {
+		t.Fatalf("stderr must explain that serve is running, got %q", stderr)
+	}
+
+	// Once the lock is released, the same replay succeeds and the lock it
+	// took for itself is released again afterwards.
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, stderr := runCLI(t, args...); code != exitOK {
+		t.Fatalf("exit = %d (stderr %q), want 0 without a lock holder", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "lock")); !os.IsNotExist(err) {
+		t.Fatalf("replay must release its lock on completion, stat err = %v", err)
+	}
+}
+
 func TestReplayZeroTargetsIsSuccess(t *testing.T) {
 	cfgPath, _ := writeConfig(t)
 	code, stdout, _ := runCLI(t, "replay", "--config", cfgPath, "--topic", "orders",

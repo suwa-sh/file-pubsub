@@ -64,6 +64,10 @@ func (p *Pipeline) ValidateReplay(params ReplayParams) error {
 // Replay re-places archived messages into the destination subscription with
 // AtomicWrite and appends a replay record to each manifest (SP-102). Other
 // subscriptions are never touched. It returns the number of placed messages.
+//
+// Replay rewrites manifests, so the caller must hold the data-dir lock
+// (store.LockManager) before invoking it: running concurrently with serve
+// would lose manifest updates to last-writer-wins races.
 func (p *Pipeline) Replay(ctx context.Context, params ReplayParams) (int, error) {
 	if err := p.ValidateReplay(params); err != nil {
 		return 0, err

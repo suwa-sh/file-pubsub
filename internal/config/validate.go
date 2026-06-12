@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -29,6 +30,18 @@ func (e ValidationErrors) Error() string {
 	}
 	return strings.Join(msgs, "\n")
 }
+
+// namePattern restricts topic / subscription names to safe path components:
+// they become directory / file names under data_dir (archive / dlq /
+// processed), so path separators and traversal sequences must be rejected.
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// isSafeName reports whether name is a safe single path component.
+func isSafeName(name string) bool {
+	return name != "." && name != ".." && namePattern.MatchString(name)
+}
+
+const nameRemedy = `use only letters, digits, ".", "_" and "-" (no path separators; "." and ".." alone are not allowed)`
 
 // Validate checks required keys, enum values, name duplication and reference
 // integrity (SR-101). It returns all violations, not just the first one.
@@ -59,6 +72,8 @@ func Validate(c *Config) ValidationErrors {
 		tp := fmt.Sprintf("topics[%d]", i)
 		if t.Name == "" {
 			add(tp+".name", "topic name is missing", "set a unique topic name")
+		} else if !isSafeName(t.Name) {
+			add(tp+".name", fmt.Sprintf("topic name %q is not a safe path component", t.Name), nameRemedy)
 		} else if topicNames[t.Name] {
 			add(tp+".name", fmt.Sprintf("topic name %q is duplicated", t.Name), "make every topic name unique")
 		} else {
@@ -75,6 +90,8 @@ func Validate(c *Config) ValidationErrors {
 			sp := fmt.Sprintf("%s.subscriptions[%d]", tp, j)
 			if s.Name == "" {
 				add(sp+".name", "subscription name is missing", "set a subscription name such as current / next")
+			} else if !isSafeName(s.Name) {
+				add(sp+".name", fmt.Sprintf("subscription name %q is not a safe path component", s.Name), nameRemedy)
 			} else if subNames[s.Name] {
 				add(sp+".name", fmt.Sprintf("subscription name %q is duplicated within the topic", s.Name), "make subscription names unique within the topic")
 			} else {

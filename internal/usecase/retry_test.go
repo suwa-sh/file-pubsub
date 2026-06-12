@@ -93,3 +93,70 @@ func TestRetryCountsFailuresAndIsolatesToDLQ(t *testing.T) {
 		t.Fatal("a dlq-isolated subscription must not be redelivered automatically")
 	}
 }
+
+// TestRetryResumesRetryingToDelivered guards crash recovery: a manifest left
+// in retrying (crash right after the failed → retrying write) must be picked
+// up by the next Retry pass and driven to delivered once the destination
+// works again, instead of being stuck forever.
+func TestRetryResumesRetryingToDelivered(t *testing.T) {
+	e := newEnv(t, config.HandlingDelete)
+	m := e.seedArchived("orders_1.csv", "payload")
+	e.breakSubscription("next")
+	e.p.Fanout(context.Background())
+
+	// Simulate the crash window: status written as retrying, nothing after.
+	stuck, err := e.p.Manifests.Get(m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stuck.Status = domain.StatusRetrying
+	if err := e.p.Manifests.Put(stuck); err != nil {
+		t.Fatal(err)
+	}
+
+	e.setSubscriptionDir("next", filepath.Join(t.TempDir(), "next"))
+	e.p.Retry(context.Background())
+
+	if !fileExists(t, e.subFile("next", "orders_1.csv")) {
+		t.Fatal("the retrying message must be redelivered after restart")
+	}
+	got, err := e.p.Manifests.Get(m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusDelivered {
+		t.Fatalf("status = %s, want delivered", got.Status)
+	}
+}
+
+// TestRetryResumesRetryingToDLQ: a manifest left in retrying with the retry
+// limit already exhausted must proceed to DLQ isolation on the next pass.
+func TestRetryResumesRetryingToDLQ(t *testing.T) {
+	e := newEnv(t, config.HandlingDelete) // RetryMaxCount = 2
+	m := e.seedArchived("orders_1.csv", "payload")
+	e.breakSubscription("next")
+	e.p.Fanout(context.Background())
+
+	stuck, err := e.p.Manifests.Get(m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stuck.Status = domain.StatusRetrying
+	stuck.RetryCount = 2 // limit exhausted before the crash
+	if err := e.p.Manifests.Put(stuck); err != nil {
+		t.Fatal(err)
+	}
+
+	e.p.Retry(context.Background())
+
+	if !fileExists(t, e.p.DLQ.FilePath("orders", m.MessageID)) {
+		t.Fatal("the retrying message must be isolated to the DLQ after restart")
+	}
+	got, err := e.p.Manifests.Get(m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.StatusDLQ {
+		t.Fatalf("status = %s, want dlq", got.Status)
+	}
+}

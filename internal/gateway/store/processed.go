@@ -15,10 +15,20 @@ type processedFile struct {
 	Entries []ProcessedEntry `json:"entries"`
 }
 
-// ProcessedEntry is one element of processed_json.entries.
+// ProcessedEntry is one element of processed_json.entries. A source file is
+// identified by name + mtime (UnixNano) + size, so a same-name re-output with
+// different content (mtime or size changed) is re-collected instead of being
+// skipped forever.
 type ProcessedEntry struct {
 	SourceFileIdentifier string    `json:"source_file_identifier"`
+	ModTimeUnixNano      int64     `json:"mtime_unixnano"`
+	Size                 int64     `json:"size"`
 	ProcessedAt          time.Time `json:"processed_at"`
+}
+
+// matches reports whether the entry records exactly this source file state.
+func (e ProcessedEntry) matches(name string, modTime time.Time, size int64) bool {
+	return e.SourceFileIdentifier == name && e.ModTimeUnixNano == modTime.UnixNano() && e.Size == size
 }
 
 // ProcessedStore reads and writes processed/{topic}.json.
@@ -46,14 +56,15 @@ func (s *ProcessedStore) load(topic string) (*processedFile, error) {
 	return &f, nil
 }
 
-// IsProcessed reports whether the source file identifier is already recorded.
-func (s *ProcessedStore) IsProcessed(topic, sourceFileIdentifier string) (bool, error) {
+// IsProcessed reports whether this exact source file state (name + mtime +
+// size) is already recorded.
+func (s *ProcessedStore) IsProcessed(topic, name string, modTime time.Time, size int64) (bool, error) {
 	f, err := s.load(topic)
 	if err != nil {
 		return false, err
 	}
 	for _, e := range f.Entries {
-		if e.SourceFileIdentifier == sourceFileIdentifier {
+		if e.matches(name, modTime, size) {
 			return true, nil
 		}
 	}
@@ -62,18 +73,23 @@ func (s *ProcessedStore) IsProcessed(topic, sourceFileIdentifier string) (bool, 
 
 // MarkProcessed appends a processed record with AtomicWrite. Until the record
 // is persisted the file stays unprocessed (safe side: re-collection candidate).
-// Marking an already recorded identifier is a no-op (idempotent).
-func (s *ProcessedStore) MarkProcessed(topic, sourceFileIdentifier string, at time.Time) error {
+// Marking an already recorded file state is a no-op (idempotent).
+func (s *ProcessedStore) MarkProcessed(topic, name string, modTime time.Time, size int64, at time.Time) error {
 	f, err := s.load(topic)
 	if err != nil {
 		return err
 	}
 	for _, e := range f.Entries {
-		if e.SourceFileIdentifier == sourceFileIdentifier {
+		if e.matches(name, modTime, size) {
 			return nil
 		}
 	}
-	f.Entries = append(f.Entries, ProcessedEntry{SourceFileIdentifier: sourceFileIdentifier, ProcessedAt: at})
+	f.Entries = append(f.Entries, ProcessedEntry{
+		SourceFileIdentifier: name,
+		ModTimeUnixNano:      modTime.UnixNano(),
+		Size:                 size,
+		ProcessedAt:          at,
+	})
 	if err := WriteJSONAtomic(s.path(topic), f); err != nil {
 		return fmt.Errorf("mark processed %s: %w", topic, err)
 	}

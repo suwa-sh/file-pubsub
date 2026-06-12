@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"time"
 
@@ -103,11 +104,31 @@ func (c *FTP) Fetch(ctx context.Context, name, destDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", name, err)
 	}
-	local, err := writeTempAndRename(name, destDir, resp, want, resp.Close)
+	local, err := downloadAndClose(name, destDir, resp, want)
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", name, err)
 	}
 	return local, nil
+}
+
+// downloadAndClose runs the shared download protocol over the FTP data
+// connection resp and guarantees resp is closed on every path: the success
+// path closes it as the writeTempAndRename finish step (confirming the
+// transfer-complete reply, whose error fails the fetch), and the deferred
+// close covers every error path so a failed download never leaks the data
+// connection. The close runs at most once.
+func downloadAndClose(name, destDir string, resp io.ReadCloser, want int64) (string, error) {
+	closed := false
+	var closeErr error
+	closeResp := func() error {
+		if !closed {
+			closed = true
+			closeErr = resp.Close()
+		}
+		return closeErr
+	}
+	defer func() { _ = closeResp() }()
+	return writeTempAndRename(name, destDir, resp, want, closeResp)
 }
 
 // Remove deletes the original file after archive save success (delete handling).

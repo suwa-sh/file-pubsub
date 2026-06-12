@@ -84,10 +84,6 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 		return err
 	}
 
-	latest, err := p.latestCollectedAt(t.Name)
-	if err != nil {
-		return err
-	}
 	obs := p.topicObservations(t.Name)
 	interval := time.Duration(t.Source.StabilityCheck.Interval) * time.Second
 	present := map[string]bool{}
@@ -98,7 +94,7 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 			continue
 		}
 		if t.Source.OriginalFileHandling == config.HandlingCopy {
-			done, err := p.Processed.IsProcessed(t.Name, f.Name)
+			done, err := p.Processed.IsProcessed(t.Name, f.Name, f.ModTime, f.Size)
 			if err != nil {
 				p.emit(logging.Event{Topic: t.Name, EventType: "collect_failed", ErrorDetail: fmt.Sprintf("%v. the file %q stays a re-collection candidate", err, f.Name)})
 				continue
@@ -106,14 +102,13 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 			if done {
 				continue
 			}
-		} else if at, ok := latest[f.Name]; ok && !f.ModTime.After(at) {
-			// Already collected and unchanged since: a leftover original
-			// whose delete failed. Retry the delete, never re-collect.
-			if err := conn.Remove(ctx, f.Name); err != nil {
-				p.emit(logging.Event{Topic: t.Name, EventType: "original_delete_failed", ErrorDetail: fmt.Sprintf("%v. check the source directory permissions; the delete is retried on the next polling cycle", err)})
-			}
-			continue
 		}
+		// Delete handling: every file present in the source is collected as a
+		// new message, even when its name and mtime match an earlier message
+		// (e.g. a leftover original whose delete failed, or a producer
+		// re-output with cp -p). At-least-once: a duplicate collection is
+		// bounded to one extra message because the original is deleted right
+		// after the archive save succeeds.
 
 		curr := domain.Observation{Name: f.Name, Size: f.Size, ModTime: f.ModTime, ObservedAt: p.now()}
 		prev, seen := obs[f.Name]
@@ -124,7 +119,7 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 		if !domain.IsStable(prev, curr, interval) {
 			continue
 		}
-		if err := p.collectFile(ctx, t, conn, fetchDir, f.Name); err != nil {
+		if err := p.collectFile(ctx, t, conn, fetchDir, f); err != nil {
 			p.emit(logging.Event{Topic: t.Name, EventType: "collect_failed", ErrorDetail: fmt.Sprintf("collect %q: %v. retried on the next polling cycle", f.Name, err)})
 			continue
 		}
@@ -141,38 +136,20 @@ func (p *Pipeline) collectTopic(ctx context.Context, t *config.Topic) error {
 	return nil
 }
 
-// latestCollectedAt maps original file name to the newest collected_at of the
-// topic, the basis of the leftover-original dedup in delete handling.
-func (p *Pipeline) latestCollectedAt(topic string) (map[string]time.Time, error) {
-	manifests, err := p.Manifests.List()
-	if err != nil {
-		return nil, fmt.Errorf("list manifests: %w", err)
-	}
-	latest := map[string]time.Time{}
-	for _, m := range manifests {
-		if m.Topic != topic {
-			continue
-		}
-		if at, ok := latest[m.OriginalFileName]; !ok || m.CollectedAt.After(at) {
-			latest[m.OriginalFileName] = m.CollectedAt
-		}
-	}
-	return latest, nil
-}
-
-func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source.Connector, fetchDir, name string) error {
+func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source.Connector, fetchDir string, f source.FileInfo) error {
+	name := f.Name
 	msg := domain.NewMessage(p.now(), t.Name, name)
 
 	local, err := conn.Fetch(ctx, name, fetchDir)
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	f, err := os.Open(local)
+	fetched, err := os.Open(local)
 	if err != nil {
 		return fmt.Errorf("open fetched file: %w", err)
 	}
-	err = p.Archive.PutWork(t.Name, msg.MessageID, f)
-	_ = f.Close()
+	err = p.Archive.PutWork(t.Name, msg.MessageID, fetched)
+	_ = fetched.Close()
 	_ = os.Remove(local)
 	if err != nil {
 		return err
@@ -197,7 +174,7 @@ func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source
 	// Original handling only after the archive save succeeded (LR-303).
 	switch t.Source.OriginalFileHandling {
 	case config.HandlingCopy:
-		if err := p.Processed.MarkProcessed(t.Name, name, p.now()); err != nil {
+		if err := p.Processed.MarkProcessed(t.Name, name, f.ModTime, f.Size, p.now()); err != nil {
 			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "collect_failed", ErrorDetail: fmt.Sprintf("%v. the file stays a re-collection candidate until the processed record is persisted", err)})
 		}
 	default:

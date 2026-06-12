@@ -96,7 +96,11 @@ func TestCollectCopyModeNoDuplicate(t *testing.T) {
 	if !fileExists(t, filepath.Join(e.srcDir, "customers.csv")) {
 		t.Fatal("original must remain in copy mode")
 	}
-	done, err := e.p.Processed.IsProcessed("orders", "customers.csv")
+	info, err := os.Stat(filepath.Join(e.srcDir, "customers.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := e.p.Processed.IsProcessed("orders", "customers.csv", info.ModTime(), info.Size())
 	if err != nil || !done {
 		t.Fatalf("processed record missing: done=%v err=%v", done, err)
 	}
@@ -108,26 +112,90 @@ func TestCollectCopyModeNoDuplicate(t *testing.T) {
 	}
 }
 
-func TestCollectDeleteModeLeftoverOriginalNotRecollected(t *testing.T) {
+// TestCollectCopyModeRecollectsChangedFile guards the processed key: a
+// same-name re-output whose mtime or size changed must be re-collected (the
+// old name-only key skipped it forever), while an unchanged file (same name +
+// mtime + size) stays skipped.
+func TestCollectCopyModeRecollectsChangedFile(t *testing.T) {
+	e := newEnv(t, config.HandlingCopy)
+	e.writeSource("customers.csv", "v1")
+	e.collectStable()
+	if got := len(e.manifests()); got != 1 {
+		t.Fatalf("manifests = %d, want 1", got)
+	}
+
+	// Size change under the same name: re-collected as a new message.
+	e.writeSource("customers.csv", "v1+more")
+	e.collectStable()
+	if got := len(e.manifests()); got != 2 {
+		t.Fatalf("size change must be re-collected, got %d manifests", got)
+	}
+
+	// mtime change with identical size: re-collected as a new message.
+	src := filepath.Join(e.srcDir, "customers.csv")
+	info, err := os.Stat(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bumped := info.ModTime().Add(time.Hour)
+	if err := os.Chtimes(src, bumped, bumped); err != nil {
+		t.Fatal(err)
+	}
+	e.collectStable()
+	if got := len(e.manifests()); got != 3 {
+		t.Fatalf("mtime change must be re-collected, got %d manifests", got)
+	}
+
+	// Unchanged (same name + mtime + size): skipped.
+	e.collectStable()
+	e.collectStable()
+	if got := len(e.manifests()); got != 3 {
+		t.Fatalf("unchanged file must stay skipped, got %d manifests", got)
+	}
+}
+
+// TestCollectDeleteModeSameNameSameMtimeRecollected guards against the old
+// mtime heuristic that treated a same-name file whose mtime predates the
+// recorded collected_at as a "delete leftover" and removed it without
+// fetching: a producer re-output that preserves mtime (cp -p) was silently
+// lost. Delete handling must always collect a present source file as a new
+// message (at-least-once); there is no delete-without-collect path.
+func TestCollectDeleteModeSameNameSameMtimeRecollected(t *testing.T) {
 	e := newEnv(t, config.HandlingDelete)
 	e.writeSource("orders_1.csv", "a")
 	e.collectStable()
-	m := e.singleManifest()
+	first := e.singleManifest()
 
-	// Simulate a failed original delete: the file reappears with its mtime
-	// before the recorded collected_at.
+	// The same file reappears with identical content and an mtime before the
+	// recorded collected_at (producer re-output with preserved mtime).
 	e.writeSource("orders_1.csv", "a")
-	old := m.CollectedAt.Add(-time.Hour)
+	old := first.CollectedAt.Add(-time.Hour)
 	if err := os.Chtimes(filepath.Join(e.srcDir, "orders_1.csv"), old, old); err != nil {
 		t.Fatal(err)
 	}
 
 	e.collectStable()
-	if got := len(e.manifests()); got != 1 {
-		t.Fatalf("leftover original must not become a new message, got %d manifests", got)
+	ms := e.manifests()
+	if len(ms) != 2 {
+		t.Fatalf("the reappeared file must be collected as a new message, got %d manifests", len(ms))
+	}
+	var second *store.Manifest
+	for _, m := range ms {
+		if m.MessageID != first.MessageID {
+			second = m
+		}
+	}
+	if second == nil {
+		t.Fatal("the second collection must get a new message_id")
+	}
+	if second.Status != domain.StatusArchived {
+		t.Fatalf("second status = %s, want archived", second.Status)
+	}
+	if ok, _ := e.p.Archive.Exists("orders", second.MessageID); !ok {
+		t.Fatal("the re-collected payload must be archived, not just deleted")
 	}
 	if fileExists(t, filepath.Join(e.srcDir, "orders_1.csv")) {
-		t.Fatal("leftover original must be deleted on retry")
+		t.Fatal("the original must be deleted after the archive save")
 	}
 }
 

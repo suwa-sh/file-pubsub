@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
+	"github.com/suwa-sh/file-pubsub/internal/gateway/store"
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 	"github.com/suwa-sh/file-pubsub/internal/usecase"
 )
@@ -26,6 +28,19 @@ func cmdReplay(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return exitUsage
 	}
+
+	// Replay rewrites manifests (read-modify-write), so it takes the same
+	// data-dir lock as serve: a single writer at a time (SR-006).
+	lock := store.NewLockManager(cfg.DataDir)
+	if err := lock.Acquire(os.Getpid(), time.Now()); err != nil {
+		if errors.Is(err, store.ErrAlreadyLocked) {
+			_, _ = fmt.Fprintf(stderr, "serve is running: %v. stop the daemon before running replay (the manifest allows only a single writer)\n", err)
+			return exitDuplicate
+		}
+		_, _ = fmt.Fprintln(stderr, err)
+		return exitRuntime
+	}
+	defer func() { _ = lock.Release() }()
 
 	params := usecase.ReplayParams{Topic: *topic, MessageID: *messageID, Subscription: *subscription}
 	var err error

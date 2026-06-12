@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,76 @@ func TestWriteTempAndRename_FinishError(t *testing.T) {
 	}
 	assertNoFiles(t, destDir)
 }
+
+// fakeReadCloser counts Close calls so the tests can assert the FTP data
+// connection is released on every path.
+type fakeReadCloser struct {
+	io.Reader
+	closeCalls int
+	closeErr   error
+}
+
+func (f *fakeReadCloser) Close() error {
+	f.closeCalls++
+	return f.closeErr
+}
+
+// TestDownloadAndClose_ClosesOnEveryPath guards the FTP data-connection
+// lifecycle: resp must be closed exactly once whether the download succeeds,
+// the copy fails mid-stream or the size check rejects the result.
+func TestDownloadAndClose_ClosesOnEveryPath(t *testing.T) {
+	t.Run("success closes once", func(t *testing.T) {
+		resp := &fakeReadCloser{Reader: strings.NewReader("abc")}
+		got, err := downloadAndClose("f.csv", t.TempDir(), resp, 3)
+		if err != nil {
+			t.Fatalf("downloadAndClose: %v", err)
+		}
+		if data, err := os.ReadFile(got); err != nil || string(data) != "abc" {
+			t.Fatalf("content = %q, err = %v", data, err)
+		}
+		if resp.closeCalls != 1 {
+			t.Errorf("closeCalls = %d, want 1", resp.closeCalls)
+		}
+	})
+	t.Run("size mismatch still closes", func(t *testing.T) {
+		destDir := t.TempDir()
+		resp := &fakeReadCloser{Reader: strings.NewReader("abc")}
+		if _, err := downloadAndClose("f.csv", destDir, resp, 99); err == nil {
+			t.Fatal("size mismatch must fail")
+		}
+		if resp.closeCalls != 1 {
+			t.Errorf("closeCalls = %d, want 1 (no leak on the error path)", resp.closeCalls)
+		}
+		assertNoFiles(t, destDir)
+	})
+	t.Run("read error still closes", func(t *testing.T) {
+		destDir := t.TempDir()
+		resp := &fakeReadCloser{Reader: io.MultiReader(strings.NewReader("ab"), errReader{})}
+		if _, err := downloadAndClose("f.csv", destDir, resp, 3); err == nil {
+			t.Fatal("a mid-stream read error must fail the fetch")
+		}
+		if resp.closeCalls != 1 {
+			t.Errorf("closeCalls = %d, want 1 (no leak on the error path)", resp.closeCalls)
+		}
+		assertNoFiles(t, destDir)
+	})
+	t.Run("close error fails the fetch once", func(t *testing.T) {
+		destDir := t.TempDir()
+		resp := &fakeReadCloser{Reader: strings.NewReader("abc"), closeErr: errors.New("426 transfer aborted")}
+		if _, err := downloadAndClose("f.csv", destDir, resp, 3); err == nil {
+			t.Fatal("a failing transfer-complete reply must fail the fetch")
+		}
+		if resp.closeCalls != 1 {
+			t.Errorf("closeCalls = %d, want 1 (the deferred close must not double-close)", resp.closeCalls)
+		}
+		assertNoFiles(t, destDir)
+	})
+}
+
+// errReader fails every Read, simulating a dropped data connection.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
 
 // assertNoFiles checks that no final or temp file leaked into dir.
 func assertNoFiles(t *testing.T, dir string) {
