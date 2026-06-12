@@ -23,7 +23,115 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: vet
         run: go vet ./...
-      - name: test
-        run: go test ./... -count=1
+      - name: test (race + coverage)
+        run: go test ./... -count=1 -race -coverprofile=coverage.out -covermode=atomic
+      - name: coverage summary
+        run: go tool cover -func=coverage.out | tail -1
       - name: build
         run: go build ./...
+
+  qlty:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26"
+      - name: install qlty
+        run: |
+          curl -fsSL https://qlty.sh | bash
+          echo "$HOME/.qlty/bin" >> "$GITHUB_PATH"
+      - name: qlty check
+        run: qlty check --all --no-progress --no-formatters
+
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: "~> v2"
+          args: check
+
+  docker-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: false
+
+  e2e-compose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: start stack
+        working-directory: examples/docker-compose
+        run: docker compose up -d --build
+      - name: wait for healthz
+        working-directory: examples/docker-compose
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:19090/healthz >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "healthz did not become ready" >&2
+          docker compose logs
+          exit 1
+      - name: deliver via local topic (invoices)
+        working-directory: examples/docker-compose
+        run: |
+          echo "id,qty" > sources/local/invoices_ci.csv
+          for _ in $(seq 1 45); do
+            if [ -f data/subscriptions/invoices/current/invoices_ci.csv ] \
+               && [ -f data/subscriptions/invoices/next/invoices_ci.csv ]; then
+              echo "invoices delivered to current and next"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "invoices file was not delivered" >&2
+          docker compose logs file-pubsub
+          find data -type f >&2
+          exit 1
+      - name: deliver via sftp topic (orders)
+        working-directory: examples/docker-compose
+        run: |
+          echo "id,qty" > sources/sftp/orders_ci.csv
+          for _ in $(seq 1 45); do
+            if [ -f data/subscriptions/orders/current/orders_ci.csv ] \
+               && [ -f data/subscriptions/orders/next/orders_ci.csv ]; then
+              echo "orders delivered to current and next"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "orders file was not delivered" >&2
+          docker compose logs file-pubsub
+          find data -type f >&2
+          exit 1
+      - name: verify metrics
+        run: |
+          curl -fsS http://localhost:19090/metrics | grep -E 'file_pubsub_processed_total\{topic="(invoices|orders)"\}'
+      - name: stop stack
+        if: always()
+        working-directory: examples/docker-compose
+        run: docker compose down -v
