@@ -47,7 +47,21 @@ flowchart LR
 
 ## Quick Start
 
-### シングルバイナリ
+### インストール
+
+ビルド済みバイナリ ([GitHub Releases](https://github.com/suwa-sh/file-pubsub/releases)。linux/darwin × amd64/arm64):
+
+```bash
+curl -fsSL https://github.com/suwa-sh/file-pubsub/releases/latest/download/file-pubsub_<version>_linux_amd64.tar.gz | tar xz
+```
+
+コンテナイメージ (ghcr.io):
+
+```bash
+docker pull ghcr.io/suwa-sh/file-pubsub:latest
+```
+
+ソースからビルドする場合 (Go 1.24+):
 
 ```bash
 go build -o file-pubsub ./cmd/file-pubsub
