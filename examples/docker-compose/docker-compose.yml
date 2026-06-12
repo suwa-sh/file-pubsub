@@ -1,0 +1,38 @@
+# file-pubsub 動作確認環境: file-pubsub + 収集元 SFTP / FTP サーバ。
+# producer 役はホストから sources/ 配下にファイルを置くだけ。
+# 配信結果は data/subscriptions/ 配下で確認できる。
+services:
+  file-pubsub:
+    build:
+      context: ../..
+    image: file-pubsub:local
+    environment:
+      # config.yaml の ${SFTP_PASSWORD} / ${FTP_PASSWORD} 参照を解決する
+      SFTP_PASSWORD: producer-pass
+      FTP_PASSWORD: producer-pass
+    volumes:
+      - ./config.yaml:/etc/file-pubsub/config.yaml:ro
+      - ./data:/data
+      - ./sources/local:/sources/local
+    ports:
+      - "19090:9090" # /metrics と /healthz (ホスト側はポート衝突しにくい 19090)
+    depends_on:
+      - sftp-server
+      - ftp-server
+
+  # 収集元 SFTP サーバ (topic: orders)。ホストの sources/sftp/ に置いた
+  # ファイルが producer ユーザの /out として見える。
+  sftp-server:
+    image: atmoz/sftp:alpine
+    command: producer:producer-pass:1001::out
+    volumes:
+      - ./sources/sftp:/home/producer/out
+
+  # 収集元 FTP サーバ (topic: customers)。パッシブモード。compose ネットワーク
+  # 内からのみ接続する (ホストへのポート公開はしない)。
+  ftp-server:
+    image: delfer/alpine-ftp-server
+    environment:
+      USERS: "producer|producer-pass|/ftp/producer|1001"
+    volumes:
+      - ./sources/ftp:/ftp/producer

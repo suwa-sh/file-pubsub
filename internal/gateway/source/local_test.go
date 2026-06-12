@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,16 +10,21 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	c, err := New(Options{Type: "local", Directory: t.TempDir()})
-	if err != nil || c == nil {
-		t.Fatalf("local connector: %v", err)
+	cases := map[string]any{
+		"local": (*Local)(nil),
+		"ftp":   (*FTP)(nil),
+		"sftp":  (*SFTP)(nil),
+		"scp":   (*SCP)(nil),
 	}
-	defer c.Close()
-
-	for _, typ := range []string{"ftp", "sftp", "scp"} {
-		if _, err := New(Options{Type: typ}); err == nil {
-			t.Errorf("%s must report not implemented (Phase 3)", typ)
+	for typ, want := range cases {
+		c, err := New(Options{Type: typ, Directory: t.TempDir(), Host: "h", Username: "u", Password: "p"})
+		if err != nil || c == nil {
+			t.Fatalf("%s connector: %v", typ, err)
 		}
+		if fmt.Sprintf("%T", c) != fmt.Sprintf("%T", want) {
+			t.Errorf("New(%s) = %T, want %T", typ, c, want)
+		}
+		c.Close()
 	}
 	if _, err := New(Options{Type: "bogus"}); err == nil {
 		t.Error("unknown type must fail")

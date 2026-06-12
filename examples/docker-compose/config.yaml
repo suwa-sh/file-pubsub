@@ -1,0 +1,74 @@
+# file-pubsub 動作確認環境のサンプル設定 (docker-compose.yml とセット)。
+# 認証情報は環境変数参照を推奨 (値は docker-compose.yml の environment で
+# 注入している)。注意: 環境変数参照はコメント内でも展開されるため、
+# ドル記号 + 波括弧の表記をコメントに書かないこと。
+polling_interval: 5
+archive_retention: 7
+retry_max_count: 3
+metrics_port: 9090
+data_dir: /data
+
+topics:
+  # SFTP 収集の例 (atmoz/sftp)。GET 後 DELETE (既定) で回収する。
+  - name: orders
+    description: SFTP source example
+    source:
+      type: sftp
+      host: sftp-server
+      port: 22
+      directory: /out
+      auth:
+        username: producer
+        password: ${SFTP_PASSWORD}
+      stability_check:
+        interval: 2
+      exclude_patterns:
+        - "*.tmp"
+        - "*.part"
+        - ".*" # dotfile (.gitkeep 等) を収集しない
+    subscriptions:
+      - name: current
+        directory: /data/subscriptions/orders/current
+      - name: next
+        directory: /data/subscriptions/orders/next
+
+  # FTP 収集の例 (delfer/alpine-ftp-server、パッシブモード)。
+  - name: customers
+    description: FTP source example
+    source:
+      type: ftp
+      host: ftp-server
+      port: 21
+      directory: /ftp/producer
+      auth:
+        username: producer
+        password: ${FTP_PASSWORD}
+      stability_check:
+        interval: 2
+      exclude_patterns:
+        - "*.tmp"
+        - "*.part"
+        - ".*" # dotfile (.gitkeep 等) を収集しない
+    subscriptions:
+      - name: current
+        directory: /data/subscriptions/customers/current
+      - name: next
+        directory: /data/subscriptions/customers/next
+
+  # ローカルディレクトリ収集の例 (ホストの sources/local/ をマウント)。
+  - name: invoices
+    description: local directory source example
+    source:
+      type: local
+      directory: /sources/local
+      stability_check:
+        interval: 2
+      exclude_patterns:
+        - "*.tmp"
+        - "*.part"
+        - ".*" # dotfile (.gitkeep 等) を収集しない
+    subscriptions:
+      - name: current
+        directory: /data/subscriptions/invoices/current
+      - name: next
+        directory: /data/subscriptions/invoices/next

@@ -1,0 +1,6 @@
+# 動作確認で生成されるデータと投入ファイルは追跡しない
+data/*
+sources/local/*
+sources/sftp/*
+sources/ftp/*
+!**/.gitkeep

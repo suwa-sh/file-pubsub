@@ -42,14 +42,19 @@ type Options struct {
 	KeyFile   string
 }
 
-// New returns the connector for o.Type. Remote connectors (ftp / sftp / scp)
-// are planned for Phase 3.
+// New returns the connector for o.Type. Remote connectors connect lazily on
+// first use, so a connection failure surfaces on List / Fetch / Remove (and
+// is logged as collect_failed for the topic), not here.
 func New(o Options) (Connector, error) {
 	switch o.Type {
 	case "local":
 		return NewLocal(o.Directory), nil
-	case "ftp", "sftp", "scp":
-		return nil, fmt.Errorf("source type %q is not implemented yet (Phase 3)", o.Type)
+	case "ftp":
+		return NewFTP(o), nil
+	case "sftp":
+		return NewSFTP(o), nil
+	case "scp":
+		return NewSCP(o), nil
 	default:
 		return nil, fmt.Errorf("unknown source type %q", o.Type)
 	}
