@@ -1,5 +1,13 @@
 # file-pubsub
 
+[![ci](https://github.com/suwa-sh/file-pubsub/actions/workflows/ci.yml/badge.svg)](https://github.com/suwa-sh/file-pubsub/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/suwa-sh/file-pubsub)](https://github.com/suwa-sh/file-pubsub/releases)
+[![go version](https://img.shields.io/github/go-mod/go-version/suwa-sh/file-pubsub)](go.mod)
+[![container](https://img.shields.io/badge/ghcr.io-suwa--sh%2Ffile--pubsub-blue)](https://github.com/suwa-sh/file-pubsub/pkgs/container/file-pubsub)
+[![license](https://img.shields.io/github/license/suwa-sh/file-pubsub)](LICENSE)
+
+![file-pubsub — レガシーファイル連携を Pub/Sub に](docs/assets/eyecatch.png)
+
 FTP GET/DELETE 型のレガシーファイル IF を Pub/Sub 風の配信モデルへ変換する軽量ブリッジ。
 
 Go 実装のシングルバイナリ (Linux 主対象 + macOS、Docker イメージあり) で、Producer・Consumer とも改修不要。MIT ライセンス。
@@ -324,6 +332,7 @@ topics:
 
 | ドキュメント | 内容 |
 |---|---|
+| [docs/README.md](docs/README.md) | 設計成果物の全体ナビゲーション (統計・図・ADR・イベント履歴) |
 | [docs/usdm](docs/usdm) | 要求仕様 (USDM) |
 | [docs/rdra](docs/rdra) | 要件定義モデル (RDRA) |
 | [docs/nfr](docs/nfr) | 非機能要求 |
