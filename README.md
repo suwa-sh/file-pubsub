@@ -61,7 +61,7 @@ curl -fsSL https://github.com/suwa-sh/file-pubsub/releases/latest/download/file-
 docker pull ghcr.io/suwa-sh/file-pubsub:latest
 ```
 
-ソースからビルドする場合 (Go 1.24+):
+ソースからビルドする場合 (Go 1.26+):
 
 ```bash
 go build -o file-pubsub ./cmd/file-pubsub
