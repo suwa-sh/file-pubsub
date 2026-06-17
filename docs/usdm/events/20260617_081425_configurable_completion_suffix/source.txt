@@ -1,0 +1,16 @@
+変更要望: push(put)型受信モード(inbox)の完了検知設定 completion を、単一文字列から { mode, suffix } のネスト構造へ変更する。
+
+mode は stability(既定) / rename / marker。
+suffix は rename の一時拡張子・marker のマーカー拡張子を表し、Producer 既存の規約に合わせて設定可能にする
+(省略時の既定は rename=.tmp、marker=.done。stability では未使用)。
+
+この変更の目的は、file-pubsub の中核価値である「上流/下流システムの外部IF仕様を一切変更せず、
+向き先を file-pubsub に変えるだけで並行稼働・段階的切替ができる」ことを満たすため。
+Producer が既に .tmp 以外の一時拡張子や .done 以外の完了マーカー(例: .ok / .complete)を使っている場合でも、
+Producer 無改修のまま file-pubsub 側の設定だけで受け取れる必要がある。
+
+現行仕様は「可変サフィックスは設定項目化しない」「completion は単一文字列」としているが、
+これは上記目的と矛盾するため改める。
+
+影響範囲: REQ-014(push 受信モードの完了検知)とその RDRA 条件「書き込み完了判定」・情報「設定」・バリエーション「完了検知方式」。
+差分更新で反映する。

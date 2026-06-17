@@ -1,0 +1,43 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-004"
+title: "push 受信モードの選定: source.type に独立値 inbox を追加し、既存 local を拡張しない"
+status: "approved"
+generated_at: "2026-06-17T02:06:37+09:00"
+context: |
+  REQ-012 で、既存 pull 型収集(FTP/SFTP/SCP/local。file-pubsub が polling_interval ごとに
+  List → Fetch → Delete で取りに行く)を維持したまま、Producer が file-pubsub のアクセスできる
+  受信ディレクトリへ直接 put したファイルを取り込む push(put)受信モードを追加する。
+  既存の local(ローカルディレクトリ pull 型)も「ローカル FS のディレクトリを対象にする」点では
+  受信ディレクトリと似ており、local を拡張して push 挙動を兼ねさせる案も考えられた。
+  しかし local は List → Fetch(コピー)→ Delete の pull セマンティクスであり、
+  push 受信モードは「Producer が put → file-pubsub が取り込み(回収/残す)」の異なる契約・
+  異なる取り込みトリガー(fsnotify + フォールバック)・異なる完了検知(rename/marker)を持つ。
+  両者の設定キーと挙動の見分けを type 値に載せるか、サブフラグで分岐させるかが論点となった。
+decision: |
+  収集ソース種別 source.type に push 受信モードの独立値 "inbox" を新規追加する。
+  既存 pull 型(ftp / sftp / scp / local)とは排他で、Topic ごとにいずれか一方を選ぶ。
+  既存 local を拡張して push 挙動を兼ねさせることはしない。
+  受信ディレクトリの設定キーは、pull 型と共通の既存 source.directory を流用する(新キーは設けない)。
+  inbox では host / auth(pull リモート固有のキー)は使わず、source.directory に加えて
+  completion(完了検知方式)/ fallback_poll_interval を使う。トリガーは常時ハイブリッド固定の
+  ため trigger キーは設けない(ui-design.md 設定スキーマ)。
+  後段(Archive / Fan-out / Manifest / Retry / Retention)はソース種別・収集モードに依存させず、
+  収集コネクタの共通インターフェース(LP-301)に inbox コネクタ(LP-302)を 1 実装として足す。
+  理由: type 値で pull / push を一目で判別でき、config validate も type 別に必須キーを検証できる。
+  local を二義的にすると「local かつ push」「local かつ pull」の意味分岐が設定に滲み、
+  既存 pull 型現場の設定解釈・後方互換を壊すリスクがある。独立値なら既存設定は一切変わらない。
+consequences:
+  positive:
+    - "既存 pull 型 Topic(ftp/sftp/scp/local)の設定・挙動は一切変わらず、追加のみで後方互換が保たれる(REQ-012 受け入れ条件: 両モード併存)"
+    - "type 値で収集モード(pull/push)が自明になり、config validate が type 別に必須キー(pull は host/directory、inbox は directory/completion)を検証できる"
+    - "後段がソース種別非依存(LP-301)のため、Archive/Fan-out/Manifest/Retry/Retention のテスト・コードを push 用に分岐させずに流用できる"
+  negative:
+    - "ローカル FS を対象にするソースが local(pull) と inbox(push) の 2 種に分かれ、利用者はどちらを使うか選ぶ必要がある(README での使い分け説明が要る)"
+    - "収集コネクタ実装が 1 つ増える(inbox コネクタ)。ただし共通 IF に従うため後段への影響はない"
+alternatives_considered:
+  - name: "既存 local を拡張し、サブフラグ(例: source.mode: pull|push)で挙動を切り替える"
+    reason_rejected: "local の意味が pull/push の二義になり、既存 local 設定の解釈・後方互換に影響する。type 値での判別が効かず config validate も複雑化するため不採用"
+  - name: "push 受信モードを Topic 設定ではなく専用のトップレベル設定(inbox_topics 等)として分離する"
+    reason_rejected: "Topic↔収集ソース↔Subscription の構成が二系統に割れ、設定の単一性(CTP-003)と『Topic ごとに収集ソースを切り替える』モデル(情報「収集ソース」)を崩す。収集ソース種別の 1 値として足す方が RDRA に整合するため不採用"

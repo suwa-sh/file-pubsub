@@ -1,0 +1,40 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-007"
+title: "completion を {mode, suffix} のネスト構造にし、rename/marker のサフィックスを設定可能にする"
+status: "approved"
+generated_at: "2026-06-17T08:14:25+09:00"
+context: |
+  spec-decision-006 で push 受信モードの完了検知方式(stability / rename / marker)を completion で
+  選択できるようにしたが、当初は completion を単一文字列とし、rename の一時拡張子は .tmp、marker の
+  完了マーカーは xxx.done に固定していた(可変サフィックスは設定項目化しない方針)。
+  しかし file-pubsub の中核価値は『上流/下流システムの外部IF仕様を一切変更せず、向き先を file-pubsub に
+  変えるだけで並行稼働・段階的切替ができる』ことにある(REQ-014)。Producer が既に .tmp 以外の一時拡張子
+  (.part 等)や .done 以外の完了マーカー(.ok / .complete 等)を使っている現場では、固定値だと Producer を
+  改修しない限り受け取れず、上記の中核価値と矛盾する。
+  論点は、(1)サフィックスを固定のままにするか設定可能にするか (2)設定スキーマを単一文字列の拡張にするか
+  ネスト構造にするか、であった。
+decision: |
+  完了検知設定 completion を { mode, suffix } のネスト構造とする(完了検知方式バリエーションの精緻化):
+  - mode: stability(既定) / rename / marker。完了検知方式の選択(spec-decision-006 を踏襲)。
+  - suffix: rename の一時拡張子・marker のマーカー拡張子。Producer の既存規約に合わせて設定できる。
+    省略時の既定は rename=.tmp、marker=.done。stability では未使用。
+  これにより Producer が .tmp/.done 以外の規約を使っていても無改修のまま file-pubsub 側設定だけで受け取れ、
+  外部IF無変更での向き先切替による並行稼働・段階的移行が可能になる(REQ-014 / SPEC-014-03)。
+  ネスト構造にする理由: mode と suffix は意味的に従属関係(suffix は rename/marker のときだけ意味を持つ)で
+  あり、単一キーへ平坦化(completion + completion_suffix)するより completion: {mode, suffix} の方が
+  関係が明示的で、stability では suffix を書かない自然な省略が表現できるため。
+consequences:
+  positive:
+    - "Producer が .tmp/.done 以外の一時拡張子・完了マーカーを使っていても無改修で受け取れ、外部IF無変更での並行稼働・段階的切替という中核価値を満たす(REQ-014)"
+    - "mode と suffix の従属関係が設定スキーマ上で明示され、stability では suffix を省略できる"
+    - "既定値(.tmp / .done)を維持するため、suffix 省略時は spec-decision-006 と同一挙動(後方互換)"
+  negative:
+    - "completion が単一文字列からネスト構造へ変わり、config パーサ・バリデーション・既定補完の実装とテストが増える"
+    - "suffix が Producer 任意のため、空文字・前方ドット無しなど不正値のバリデーション/正規化を考慮する必要がある"
+alternatives_considered:
+  - name: "サフィックスを .tmp/.done 固定のまま(spec-decision-006 の当初方針)"
+    reason_rejected: ".tmp/.done 以外を使う既存 Producer を無改修で受け取れず、外部IF無変更での切替という中核価値(REQ-014)を満たせないため不採用"
+  - name: "completion(文字列)+ completion_suffix(文字列)の平坦な 2 キーにする"
+    reason_rejected: "suffix は mode=rename/marker のときだけ意味を持つ従属関係であり、平坦化すると stability 時に無意味な completion_suffix が並ぶ。関係を明示できるネスト構造を採用したため不採用"

@@ -29,7 +29,7 @@ file-pubsub sits between the collection source and the Consumers, and delivers t
 
 ```mermaid
 flowchart LR
-    P["Producer (no changes required)"] --> SRC["Collection source (FTP / SFTP / SCP / local)"]
+    P["Producer (no changes required)"] --> SRC["Collection source (pull: FTP / SFTP / SCP / local, or push receive: inbox)"]
     subgraph FP["file-pubsub"]
         direction LR
         COL["Collect (GET then DELETE)"] --> AR["Archive (keep everything per Topic)"]
@@ -167,18 +167,48 @@ All configuration lives in a single YAML file. `${ENV_VAR}` inside string values
 | `data_dir` | - | Data root for archive / manifest / work / dlq, etc. Defaults to the directory containing config.yaml |
 | `topics[].name` | ✓ | Topic name (unique) |
 | `topics[].description` | - | Description |
-| `topics[].source.type` | ✓ | `local` / `ftp` / `sftp` / `scp` |
-| `topics[].source.host` | ✓ for remote | Source host |
+| `topics[].source.type` | ✓ | Pull: `local` / `ftp` / `sftp` / `scp` (file-pubsub fetches with List → Fetch → Delete). Push receive: `inbox` (the Producer puts files directly into a receive directory; see [Collection modes](#collection-modes-pull-vs-push-receive)) |
+| `topics[].source.host` | ✓ for remote | Source host (remote pull only; not used by `local` / `inbox`) |
 | `topics[].source.port` | - | Port. Omitted (0) means the protocol default (ftp 21 / sftp and scp 22) |
-| `topics[].source.directory` | ✓ | Source directory |
-| `topics[].source.original_file_handling` | - | `delete` (DELETE after GET, default) / `copy` (keep originals; processed-file tracking prevents duplicate collection) |
-| `topics[].source.stability_check.interval` | ✓ | Stability-wait interval in seconds. A file is not collected until its size and mtime stay unchanged for this interval (protects files still being written) |
+| `topics[].source.directory` | ✓ | Source directory. For `inbox`, the receive directory the Producer puts files into |
+| `topics[].source.original_file_handling` | - | `delete` (DELETE / remove from the receive directory after archiving, default) / `copy` (keep originals; processed-file tracking prevents duplicate collection) |
+| `topics[].source.stability_check.interval` | ✓ for pull / inbox stability | Stability-wait interval in seconds. A file is not collected until its size and mtime stay unchanged for this interval (protects files still being written). Not required for `inbox` with `completion.mode` rename / marker |
 | `topics[].source.exclude_patterns` | - | Exclusion glob patterns (e.g. `*.tmp`) |
+| `topics[].source.completion.mode` | - | **`inbox` only.** Write-completion detection: `stability` (default; same size/mtime wait as pull) / `rename` (collect once the final name appears) / `marker` (collect once the done marker appears) |
+| `topics[].source.completion.suffix` | - | **`inbox` only.** Suffix used by `rename` (temp extension) / `marker` (marker extension), matched to the Producer's convention. Default `.tmp` for rename, `.done` for marker; unused for stability |
+| `topics[].source.fallback_poll_interval` | - | **`inbox` only.** Fallback polling interval in seconds for when fsnotify events are missed (NFS/SMB). Defaults to `polling_interval` |
 | `topics[].source.auth.username` | ✓ for remote | Connection user |
 | `topics[].source.auth.password` | - | Password. **`${ENV_VAR}` reference recommended** (plain text in YAML is allowed). For sftp/scp, it is also used as the passphrase when the key is passphrase-protected |
 | `topics[].source.auth.key_file` | - | SSH private key file path (sftp / scp). **A key file is recommended over a password**. Either password or key_file is required (for remote sources) |
 | `topics[].subscriptions[].name` | ✓ | Subscription name (unique within a Topic) |
 | `topics[].subscriptions[].directory` | ✓ | Delivery directory (a local path on the server running file-pubsub) |
+
+### Collection modes: pull vs push receive
+
+Each Topic chooses one of two collection modes (the downstream Archive / Fan-out / Manifest / Retry / Retention is identical regardless of mode):
+
+- **Pull** (`type: local | ftp | sftp | scp`): file-pubsub fetches from the source every `polling_interval` (List → Fetch → Delete).
+- **Push receive** (`type: inbox`): the Producer puts files directly into `directory`, and file-pubsub ingests them with an **fsnotify event-driven + low-frequency fallback polling** hybrid (works regardless of the underlying FS — local disk / NFS / SMB; no `trigger` key, always hybrid). Write-completion is detected by `completion.mode`:
+  - `stability` — wait until size/mtime stop changing (default).
+  - `rename` — the Producer writes `xxx.csv.tmp` then renames to `xxx.csv`; the final name triggers collection (the temp name is ignored). The temp suffix is `completion.suffix` (default `.tmp`).
+  - `marker` — the Producer puts `xxx.csv` then a marker `xxx.csv.done`; the marker triggers collection of `xxx.csv` (the marker itself is never delivered, and is cleaned up with the body). The marker suffix is `completion.suffix` (default `.done`).
+
+`completion.suffix` lets you match an existing Producer's convention (e.g. `.part`, `.ok`) **without changing the Producer** — so you can switch a feed to file-pubsub just by repointing it.
+
+```yaml
+topics:
+  - name: receipts
+    source:
+      type: inbox
+      directory: /inbox/receipts
+      completion:
+        mode: marker      # stability (default) / rename / marker
+        suffix: .done      # default .done for marker; set to your Producer's convention (e.g. .ok)
+      # fallback_poll_interval: 30   # omit to reuse polling_interval
+    subscriptions:
+      - name: current
+        directory: /pub/receipts/current
+```
 
 ## Observability (/metrics and /healthz)
 

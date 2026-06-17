@@ -252,3 +252,184 @@ func TestDaemonRun_停止シグナルを受けた場合_グレースフルに停
 		t.Fatal("original file must be deleted from the source")
 	}
 }
+
+// newPushFixture は push 受信モード(inbox)のトピック "invoices"(サブスクリプション current)を
+// 構築する。srcDir を受信ディレクトリとして流用する。
+func newPushFixture(t *testing.T, mode, suffix, handling string, polling, metricsPort int) *fixture {
+	t.Helper()
+	base := t.TempDir()
+	f := &fixture{
+		srcDir:  filepath.Join(base, "inbox"),
+		dataDir: filepath.Join(base, "data"),
+		curDir:  filepath.Join(base, "subs", "current"),
+	}
+	for _, d := range []string{f.srcDir, f.dataDir, f.curDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.cfg = &config.Config{
+		PollingInterval:  polling,
+		ArchiveRetention: 90,
+		RetryMaxCount:    3,
+		MetricsPort:      metricsPort,
+		DataDir:          f.dataDir,
+		Topics: []config.Topic{{
+			Name: "invoices",
+			Source: config.Source{
+				Type:                 config.SourceTypeInbox,
+				Directory:            f.srcDir,
+				OriginalFileHandling: handling,
+				Completion:           config.Completion{Mode: mode, Suffix: suffix},
+				StabilityCheck:       config.StabilityCheck{Interval: 10},
+				FallbackPollInterval: polling,
+			},
+			Subscriptions: []config.Subscription{
+				{Name: "current", Directory: f.curDir},
+			},
+		}},
+	}
+	return f
+}
+
+func TestRunCycle_push受信モードのrename方式の場合_一時名は配信せず正式名を即配信すること(t *testing.T) {
+	// Arrange
+	f := newPushFixture(t, config.CompletionRename, ".tmp", config.HandlingDelete, 60, 9091)
+	clock := time.Date(2026, 6, 17, 2, 6, 37, 0, time.UTC)
+	pipe := usecase.NewPipeline(f.cfg, logging.New(io.Discard), nil)
+	pipe.Now = func() time.Time { return clock }
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0045.csv.tmp"), []byte("writing"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0045.csv"), []byte("id,amount\n1,100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act (rename は安定待ちなしで 1 サイクルで収集〜配信される)
+	pipe.RunCycle(context.Background())
+
+	// Assert
+	if !exists(filepath.Join(f.curDir, "invoices_0045.csv")) {
+		t.Fatal("the final name must be delivered to the subscription")
+	}
+	if exists(filepath.Join(f.curDir, "invoices_0045.csv.tmp")) {
+		t.Fatal("the temp name must never be delivered")
+	}
+	if exists(filepath.Join(f.srcDir, "invoices_0045.csv")) {
+		t.Fatal("the collected final file must be removed from the inbox (delete)")
+	}
+	if !exists(filepath.Join(f.srcDir, "invoices_0045.csv.tmp")) {
+		t.Fatal("the temp file must remain (not collected)")
+	}
+}
+
+func TestRunCycle_push受信モードのmarker方式の場合_本体を配信しマーカーは配信せず両方回収すること(t *testing.T) {
+	// Arrange
+	f := newPushFixture(t, config.CompletionMarker, ".done", config.HandlingDelete, 60, 9092)
+	clock := time.Date(2026, 6, 17, 2, 6, 37, 0, time.UTC)
+	pipe := usecase.NewPipeline(f.cfg, logging.New(io.Discard), nil)
+	pipe.Now = func() time.Time { return clock }
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0046.csv"), []byte("id,amount\n1,100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0046.csv.done"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act
+	pipe.RunCycle(context.Background())
+
+	// Assert
+	if !exists(filepath.Join(f.curDir, "invoices_0046.csv")) {
+		t.Fatal("the body must be delivered on marker arrival")
+	}
+	if exists(filepath.Join(f.curDir, "invoices_0046.csv.done")) {
+		t.Fatal("the marker itself must never be delivered")
+	}
+	if exists(filepath.Join(f.srcDir, "invoices_0046.csv")) || exists(filepath.Join(f.srcDir, "invoices_0046.csv.done")) {
+		t.Fatal("both the body and the marker must be removed from the inbox (delete)")
+	}
+	manifests, err := store.NewManifestStore(f.dataDir).List()
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("marker must yield exactly one message (not the marker), got %d err=%v", len(manifests), err)
+	}
+}
+
+func TestRunCycle_push受信モードのmarkerかつcopyの場合_二重契機でも重複配信しないこと(t *testing.T) {
+	// Arrange
+	f := newPushFixture(t, config.CompletionMarker, ".done", config.HandlingCopy, 60, 9093)
+	clock := time.Date(2026, 6, 17, 2, 6, 37, 0, time.UTC)
+	pipe := usecase.NewPipeline(f.cfg, logging.New(io.Discard), nil)
+	pipe.Now = func() time.Time { return clock }
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0048.csv"), []byte("id,amount\n1,100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0048.csv.done"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act (1 回目: 収集・配信。copy なので本体とマーカーは残置)
+	pipe.RunCycle(context.Background())
+	if !exists(filepath.Join(f.srcDir, "invoices_0048.csv")) || !exists(filepath.Join(f.srcDir, "invoices_0048.csv.done")) {
+		t.Fatal("copy handling must keep the body and the marker in the inbox")
+	}
+	// コンシューマーが引き取った状態を模す
+	if err := os.Remove(filepath.Join(f.curDir, "invoices_0048.csv")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act (2 回目: 残ったまま再契機)
+	clock = clock.Add(time.Minute)
+	pipe.RunCycle(context.Background())
+
+	// Assert
+	if exists(filepath.Join(f.curDir, "invoices_0048.csv")) {
+		t.Fatal("a processed file must not be re-collected nor re-delivered")
+	}
+	manifests, err := store.NewManifestStore(f.dataDir).List()
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("re-trigger created extra manifests: %d err=%v", len(manifests), err)
+	}
+}
+
+func TestDaemonRun_push受信モードでファイル投入時_イベント駆動でポーリングを待たず配信されること(t *testing.T) {
+	// Arrange (polling/fallback を 60s と長くし、5s 以内の配信は fsnotify 由来であることを保証する)
+	port := freePort(t)
+	f := newPushFixture(t, config.CompletionRename, ".tmp", config.HandlingDelete, 60, port)
+	lg := logging.New(io.Discard)
+	metrics := metricsreg.New()
+	pipe := usecase.NewPipeline(f.cfg, lg, metrics)
+	daemon := runtime.New(f.cfg, pipe, lg, metrics, io.Discard)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- daemon.Run(ctx) }()
+	waitFor(t, 10*time.Second, "healthz 200", func() bool {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", port))
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	})
+
+	// Act (受信ディレクトリへ正式名で put)
+	if err := os.WriteFile(filepath.Join(f.srcDir, "invoices_0050.csv"), []byte("id,amount\n1,100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert (polling 60s を待たず数秒で配信される = イベント駆動)
+	waitFor(t, 5*time.Second, "event-driven delivery before the polling interval", func() bool {
+		return exists(filepath.Join(f.curDir, "invoices_0050.csv"))
+	})
+
+	// Cleanup
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("daemon.Run = %v, want nil", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("daemon did not stop after the stop signal")
+	}
+}

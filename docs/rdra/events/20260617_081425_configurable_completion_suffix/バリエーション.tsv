@@ -1,0 +1,2 @@
+コンテキスト	バリエーション	値	説明
+配信構成管理	完了検知方式	安定判定、rename、doneマーカー	Producerの出力パターンに応じて書き込み完了を判定する方式。completion設定で mode(stability/rename/marker)と suffix を指定する。安定判定はサイズ・mtimeの安定待ち(既存stability_check)、renameは一時拡張子付きの名前(既定.tmp)から正式名への出現、doneマーカーは対象xxxに対応するマーカー(既定.done)の出現でxxxを取り込み対象にする(マーカー自体は配信対象外)。renameの一時拡張子・doneマーカーの拡張子はsuffixでProducer規約に合わせ設定可能(.part/.ok等)。収集ソース設定で選択する

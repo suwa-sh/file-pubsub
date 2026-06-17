@@ -1,0 +1,12 @@
+トリガー: RDRA 差分イベント 20260617_081425_configurable_completion_suffix (USDM REQ-014 / SPEC-014-03)
+
+push 受信モード(source.type=inbox)の完了検知設定 completion を、単一文字列から { mode, suffix } の
+ネスト構造へ変更し、rename の一時拡張子・marker のマーカー拡張子を Producer 規約に合わせ設定可能にした
+(省略時 rename=.tmp / marker=.done。stability では未使用)。
+
+目的: file-pubsub の中核価値である「上流/下流の外部IF仕様を一切変更せず、向き先を file-pubsub に変える
+だけで並行稼働・段階的切替ができる」を満たすため。Producer が .tmp/.done 以外の規約(.part/.ok 等)を
+使っていても無改修のまま受け取れるようにする。
+
+影響 UC: ファイルを収集する(Collect)。後段(Archive / Fan-out / Manifest / Retry / Retention)は不変。
+これは push 受信モード追加(20260617_020637_spec_generation)に対する差分仕様化。

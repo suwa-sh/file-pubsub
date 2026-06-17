@@ -3,6 +3,7 @@ module github.com/suwa-sh/file-pubsub
 go 1.26.4
 
 require (
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jlaffaye/ftp v0.2.1
 	github.com/pkg/sftp v1.13.10
 	github.com/prometheus/client_golang v1.23.2

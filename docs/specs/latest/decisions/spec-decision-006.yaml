@@ -1,0 +1,46 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-006"
+title: "完了検知方式を設定で選択(安定判定 / rename / done マーカー)し、既定は安定判定とする"
+status: "approved"
+generated_at: "2026-06-17T02:06:37+09:00"
+context: |
+  REQ-014 で、push 受信モードにおいて Producer の出力パターンに応じて書き込み完了の検知方式を
+  設定で選べるようにする。受信ディレクトリへ put される際の「書き込み完了」の表し方は Producer により
+  異なる: (a)サイズ・mtime が安定するもの (b)一時名(xxx.csv.tmp)から正式名(xxx.csv)へ rename するもの
+  (c)完了マーカー(xxx.done)を別途置くもの。Producer 無改修の前提で確実に完成ファイルだけを
+  取り込むには、出力パターンに合わせて検知方式を選べる必要がある。
+  論点は、(1)方式を固定にするか選択にするか (2)既定値をどれにするか (3)done マーカー方式での
+  マーカー(xxx.done)の後始末と配信対象からの除外をどう仕様化するか、であった。
+decision: |
+  完了検知方式を収集ソース設定 completion で選択できるようにする(完了検知方式バリエーション):
+  - stability(安定判定): 既存 stability_check と同一ロジック(サイズ・mtime の安定待ち)。既定値。
+  - rename: 一時名(xxx.csv.tmp)から正式名(xxx.csv)への正式名出現を契機に取り込む。一時名は対象外。
+  - marker(done マーカー): xxx.done の出現で xxx を取り込み対象にする。マーカー自体(xxx.done)は
+    配信対象に含めない。
+  これらは domain 層の共通完了判定ルール(LR-204)として扱い、収集モード(pull/push)に依存させない。
+  done マーカー方式では、対象ファイル取り込み後にマーカー(xxx.done)も後始末する(マーカー後始末 LR-305):
+  回収(delete)時はマーカーも削除し、残す(copy)時はマーカー名を処理済み管理の識別子に含めて
+  重複契機を防ぐ。既定を stability にする理由は、既存 pull 型の安定判定と挙動が一致し、Producer の
+  出力パターンが不明な場合でも安全側(完成まで待つ)に倒せるためで、既存利用者の意図と齟齬が出にくい。
+  理由: 3 方式は Producer の出力パターンを過不足なくカバーし(REQ-014)、いずれも Producer 無改修で
+  完成ファイルのみ取り込める。安定判定は既存資産をそのまま使い、rename/marker は新規だが domain の
+  純粋ロジックに閉じるため後段に影響しない。
+consequences:
+  positive:
+    - "Producer の出力パターン(安定/rename/marker)を無改修のままカバーし、完成ファイルのみ取り込める(REQ-014)"
+    - "既定 stability により既存の安定判定挙動と一致し、設定省略時も安全側に倒れる(後方互換・低リスク)"
+    - "完了判定が domain 共通ルール(LR-204)に閉じ、pull/push どちらにも同じ判定を適用できる"
+    - "done マーカー後始末を回収/残すの両方に整合させ、マーカーの配信流出と重複契機を防ぐ"
+  negative:
+    - "完了検知方式が 3 通りに増え、domain の判定分岐とテストケース(各方式 × 回収/残す)が増える"
+    - "rename / marker は Producer の出力契約(一時拡張子・マーカー命名)に依存する。サフィックスは completion.suffix で設定可能とし(spec-decision-007)、既定値(.tmp / .done)と設定方法を README で明示する必要がある"
+    - "marker 方式では対象ファイルとマーカーの 2 ファイルを後始末するため、片方だけ残る中途状態のリカバリ(次契機での再判定)を考慮する必要がある"
+alternatives_considered:
+  - name: "完了検知方式を安定判定に固定する(rename/marker を設けない)"
+    reason_rejected: "rename / marker を使う Producer では安定判定が過剰待ち・誤検知を生む。Producer 無改修で確実に取り込む要件(REQ-014)を満たせないため不採用"
+  - name: "既定を rename にする"
+    reason_rejected: "一時拡張子の命名は Producer 依存で、既定にすると規約を満たさない Producer のファイルを取り込めない/誤って一時名を拾う。既定は最も前提の少ない stability が安全なため不採用"
+  - name: "done マーカー(xxx.done)を通常ファイルとして扱い、配信対象に含める"
+    reason_rejected: "マーカーは完了の合図であり配信ペイロードではない。Consumer に不要なマーカーが流れるのは外部 IF 契約を汚すため、配信対象から除外し後始末する仕様とした"

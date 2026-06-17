@@ -16,6 +16,7 @@ func TestNew_種別を指定した場合_対応するコネクタが返り未知
 		"ftp":   (*FTP)(nil),
 		"sftp":  (*SFTP)(nil),
 		"scp":   (*SCP)(nil),
+		"inbox": (*Local)(nil), // push 受信モードはローカルディレクトリ I/O のため Local を再利用
 	}
 	for typ, want := range cases {
 		// Act

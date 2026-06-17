@@ -1,0 +1,434 @@
+# object-storage-schema.yaml
+#
+# RDB/KVS 不使用。全永続化はローカルファイルシステム (arch-decision-001)。
+# arch-design.yaml の technology_context.constraints「外部 DB を使わない(ローカルファイルシステムのみ)」に基づき、
+# rdb-schema.yaml / kvs-schema.yaml は生成せず、本ファイルにデータディレクトリレイアウト定義を統合する。
+# 全 19 UC の _model-summary.yaml の object_storage セクションを集約・重複排除したもの。
+#
+# - "バケット" はローカルファイルシステム上の論理ルート(データディレクトリ / Subscription 配置先 / ログ出力先)に読み替える。
+# - 書き込みは AtomicWrite(一時名 .tmp で書き込み → rename)を共通規約とする (SR-001 / LR-301)。
+# - 配送状態の正は常に Manifest (CTR-003)。
+
+version: "1.0"
+datastore: "object-storage"
+storage_backend: "local-filesystem"
+
+buckets:
+  # ----------------------------------------------------------------
+  # デーモンのデータディレクトリ (file-pubsub が所有・管理する領域)
+  # ----------------------------------------------------------------
+  - name: "data-directory"
+    description: "デーモン/CLI が読み書きするデータディレクトリ。config.yaml の配置場所を起点とする単一サーバのローカルファイルシステム"
+    paths:
+      - pattern: "config.yaml"
+        content_type: "application/yaml"
+        max_size: "1MB"
+        purpose: "配信構成定義の単一 YAML 設定 (CTP-003)。topics / subscriptions / 収集ソース(pull 型: type/host/directory/auth、push 受信モード: type=inbox/directory(流用)/completion/fallback_poll_interval、trigger キーなし) / 認証情報参照 / polling_interval / archive_retention / retry_max_count / metrics_port を定義する。--config で指定"
+        rdra_info: "設定 / Topic / Subscription / 収集ソース / 認証情報"
+        writers:
+          - uc: "シングルバイナリ/Dockerイメージを配置する"
+            operations: ["PUT"]
+        readers:
+          - uc: "デーモンを起動する"
+            operations: ["GET"]
+          - uc: "Topic・Subscriptionを設定する"
+            operations: ["GET"]
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["GET"]
+          - uc: "保持期間超過のArchiveを削除する"
+            operations: ["GET"]
+          - uc: "/healthzと/metricsをHTTPで公開する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "無期限(運用者が管理する設定ファイル。自動削除なし)"
+
+      - pattern: "lock"
+        content_type: "text/plain"
+        max_size: "4KB"
+        purpose: "二重起動防止の lock ファイル (SR-006)。ロック保持プロセス情報と取得日時を記録し、stale 判定に使う"
+        rdra_info: "Lock"
+        writers:
+          - uc: "デーモンを起動する"
+            operations: ["PUT"]
+          - uc: "デーモンをgraceful shutdownで停止する"
+            operations: ["DELETE"]
+        readers:
+          - uc: "デーモンを起動する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "デーモン稼働中のみ存在。graceful shutdown で削除。異常終了で残った stale lock は次回起動時にプロセス生存確認で安全に回復 (LR-002)"
+
+      - pattern: "work/collect/{topic}/{message_id}"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "収集済みファイルの一時保管(Collect 工程の出力 = Archive 保存工程の入力)。一時名 {message_id}.tmp で書き込み後 rename"
+        rdra_info: "メッセージ"
+        writers:
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["PUT", "GET"]
+        readers:
+          - uc: "Archiveに保存する"
+            operations: ["GET", "DELETE"]
+        lifecycle:
+          retention: "一時領域。Archive 保存完了後に削除"
+
+      - pattern: "work/collect/{topic}/{message_id}.tmp"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "収集ダウンロード中の一時名 (LR-303)。完了後に正式名へ rename し、途中状態ファイルを後段に渡さない"
+        rdra_info: "メッセージ"
+        writers:
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["PUT"]
+        readers: []
+        lifecycle:
+          retention: "rename までの一時的存在。中断で残った場合は再開サイクルで破棄・再収集"
+
+      - pattern: "archive/{topic}/{message_id}"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "配信前必須保存の Topic 別 Archive (SP-001)。message_id をファイル名に用い同名再出力でも上書きしない (SR-002)。再送(Replay)・監査・障害復旧・差分比較の基盤。保持期限 = 保存日時 + retention"
+        rdra_info: "Archiveファイル"
+        writers:
+          - uc: "Archiveに保存する"
+            operations: ["PUT"]
+        readers:
+          - uc: "Subscriptionへ複製配信する(Fan-out)"
+            operations: ["GET"]
+          - uc: "配信失敗をリトライしDLQへ隔離する"
+            operations: ["GET"]
+          - uc: "再送(Replay)を実行する"
+            operations: ["GET"]
+          - uc: "冪等に処理を再開する"
+            operations: ["GET"]
+          - uc: "保持期間超過のArchiveを削除する"
+            operations: ["GET", "DELETE"]
+        lifecycle:
+          retention: "config.yaml の archive_retention 日 (SP-006。保持目安 〜90 日・〜数十 GB)。retention 処理が期限超過ファイルのみ削除し、期限内は確実に保持"
+
+      - pattern: "manifest/{message_id}.json"
+        content_type: "application/json"
+        max_size: "1MB"
+        purpose: "メッセージ別の配送管理レコード(配送状態の正。CTR-003)。配送イベント追記 + Subscription 別現在状態。冪等再開 (SR-003)・監査 (NFR E.7.1.1)・再送判断の基盤。スキーマは schemas.manifest_json"
+        rdra_info: "Manifest / メッセージ"
+        writers:
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["PUT"]
+          - uc: "Archiveに保存する"
+            operations: ["GET", "PUT"]
+          - uc: "Subscriptionへ複製配信する(Fan-out)"
+            operations: ["GET", "PUT"]
+          - uc: "配信失敗をリトライしDLQへ隔離する"
+            operations: ["GET", "PUT"]
+          - uc: "再送(Replay)を実行する"
+            operations: ["GET", "PUT"]
+          - uc: "冪等に処理を再開する"
+            operations: ["GET", "PUT"]
+          - uc: "デーモンをgraceful shutdownで停止する"
+            operations: ["PUT"]
+        readers:
+          - uc: "statusコマンドで配送状態を確認する"
+            operations: ["GET"]
+          - uc: "配送履歴から再送対象を確認する"
+            operations: ["GET"]
+          - uc: "DLQ隔離メッセージを確認する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "保管 90 日目安 (NFR C.6.1.1 ログ保管期間 Lv2)"
+
+      - pattern: "dlq/{topic}/{message_id}"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "リトライ上限超過メッセージの隔離ファイル (SR-004。Archive からの複製)。恒久的な失敗を滞留させず運用者の対処判断(再送/破棄)に委ねる"
+        rdra_info: "DLQ"
+        writers:
+          - uc: "配信失敗をリトライしDLQへ隔離する"
+            operations: ["PUT"]
+        readers:
+          - uc: "DLQ隔離メッセージを確認する"
+            operations: ["GET"]
+          - uc: "配送履歴から再送対象を確認する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "自動削除なし。運用者の対処判断(Replay による再送 / 破棄)まで保持"
+
+      - pattern: "dlq/{topic}/{message_id}.meta.json"
+        content_type: "application/json"
+        max_size: "1MB"
+        purpose: "DLQ 隔離メタデータ(隔離理由・失敗回数・隔離日時)。スキーマは schemas.dlq_meta_json"
+        rdra_info: "DLQ"
+        writers:
+          - uc: "配信失敗をリトライしDLQへ隔離する"
+            operations: ["PUT"]
+        readers:
+          - uc: "DLQ隔離メッセージを確認する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "隔離ファイル本体 (dlq/{topic}/{message_id}) と同一ライフサイクル"
+
+      - pattern: "processed/{topic}.json"
+        content_type: "application/json"
+        max_size: "10MB"
+        purpose: "処理済み管理 (SP-004)。元ファイル処理方式が copy(残す)の収集ソース、および push 受信モード(inbox)の二重検知(fsnotify イベント駆動 + フォールバックポーリング)・done マーカー残置時に、処理済みファイルの再収集・重複取り込みを防止する (SP-013)。スキーマは schemas.processed_json"
+        rdra_info: "処理済み管理"
+        writers:
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["GET", "PUT"]
+        readers:
+          - uc: "冪等に処理を再開する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "自動削除なし(copy 設定の収集ソース・push 受信モードを運用する間は保持)"
+
+  # ----------------------------------------------------------------
+  # 受信ディレクトリ (push 受信モード = inbox。Producer との外部 IF)
+  # ----------------------------------------------------------------
+  - name: "receiving-directories"
+    description: "config.yaml の収集ソース定義(type=inbox)で指定する受信ディレクトリ群 (source.directory を pull 型と共通流用)。push(put)受信モードで Producer が直接ファイルを put する file-pubsub アクセス可能な共有/ローカル FS。file-pubsub が fsnotify イベント駆動 + フォールバックポーリングのハイブリッドで取り込む収集元 (SP-012 / SP-013 / SP-014)。共有 FS の実体(ローカルディスク / NFS / SMB)は環境により異なる"
+    paths:
+      - pattern: "{source.directory}/{original_file_name}"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "push 受信モードの収集元ファイル(外部 IF 契約)。Producer が put し、file-pubsub が完了検知方式(source.completion = stability / rename / marker)で完成ファイルのみ取り込む。回収(delete)では Archive 保存成功確認後に削除、残す(copy)では処理済み管理で重複取り込みを防ぐ (SP-012 / SP-014)"
+        rdra_info: "収集ソース / メッセージ"
+        writers:
+          - uc: "(外部)Producerシステムが put する"
+            operations: ["PUT"]
+            note: "操作主体は Producer システム(外部・無改修)"
+        readers:
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["GET", "DELETE"]
+            note: "DELETE は回収(delete)設定時のみ。Archive 保存成功確認後"
+        lifecycle:
+          retention: "回収(delete)時は取り込み後に削除。残す(copy)時は Producer / 運用者の責務で残置(処理済み管理が再取り込みを防ぐ)"
+
+      - pattern: "{source.directory}/{original_file_name}.done"
+        content_type: "application/octet-stream"
+        max_size: "4KB"
+        purpose: "完了検知方式=marker(source.completion=marker)時の完了マーカー (SP-014)。マーカー名は xxx.done 固定(可変サフィックスは将来拡張余地。現状は設定項目化しない)。xxx.done の出現で xxx を取り込み対象にする。マーカー自体は配信対象に含めない。回収時はマーカーも削除し、残す(copy)時は処理済み管理で識別する(マーカー後始末)"
+        rdra_info: "収集ソース / 処理済み管理"
+        writers:
+          - uc: "(外部)Producerシステムが put する"
+            operations: ["PUT"]
+            note: "操作主体は Producer システム(外部・無改修)"
+        readers:
+          - uc: "ファイルを収集する(Collect)"
+            operations: ["GET", "DELETE"]
+            note: "DELETE は回収(delete)設定時のみ。対象ファイル取り込み後に後始末"
+        lifecycle:
+          retention: "回収(delete)時は対象ファイルと同時に削除。残す(copy)時は残置(処理済み管理が重複契機を防ぐ)"
+
+  # ----------------------------------------------------------------
+  # Subscription 配置先ディレクトリ (Consumer との外部 IF)
+  # ----------------------------------------------------------------
+  - name: "subscription-directories"
+    description: "config.yaml の Subscription 定義 (target_directory_path) で指定する配置先ディレクトリ群。Consumer システムが従来手段で GET・削除する外部 IF。Subscription ごとに配送は独立 (SP-002)"
+    paths:
+      - pattern: "{subscription.directory}/{original_file_name}"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "Subscription への配信ファイル(外部 IF 契約)。正式名のファイルは常に完全な内容 (SR-001 AtomicWrite)。GET/DELETE の操作主体は Consumer システムで、取得・削除は他 Subscription と Manifest に影響しない"
+        rdra_info: "Subscription / メッセージ"
+        writers:
+          - uc: "Subscriptionへ複製配信する(Fan-out)"
+            operations: ["PUT"]
+          - uc: "配信失敗をリトライしDLQへ隔離する"
+            operations: ["PUT"]
+          - uc: "再送(Replay)を実行する"
+            operations: ["PUT"]
+          - uc: "冪等に処理を再開する"
+            operations: ["PUT"]
+          - uc: "デーモンをgraceful shutdownで停止する"
+            operations: ["PUT"]
+        readers:
+          - uc: "Subscriptionディレクトリからファイルを取得する"
+            operations: ["GET", "DELETE"]
+            note: "操作主体は Consumer システム(外部)"
+          - uc: "Subscriptionディレクトリから再送ファイルを取得する"
+            operations: ["GET", "DELETE"]
+            note: "操作主体は Consumer システム(外部)"
+        lifecycle:
+          retention: "Consumer が取得後に削除する(外部責務)。システム側は配置後に削除しない"
+
+      - pattern: "{subscription.directory}/{original_file_name}.tmp"
+        content_type: "application/octet-stream"
+        max_size: "500MB"
+        purpose: "AtomicWrite の一時名 (SR-001)。書き込み完了後に正式名へ rename する。Consumer は取得対象にしないこと(外部 IF 契約)"
+        rdra_info: "Subscription / メッセージ"
+        writers:
+          - uc: "Subscriptionへ複製配信する(Fan-out)"
+            operations: ["PUT"]
+          - uc: "配信失敗をリトライしDLQへ隔離する"
+            operations: ["PUT"]
+          - uc: "再送(Replay)を実行する"
+            operations: ["PUT", "DELETE"]
+          - uc: "冪等に処理を再開する"
+            operations: ["PUT"]
+        readers: []
+        lifecycle:
+          retention: "rename までの一時的存在。書込失敗時は削除(クリーンアップ)"
+
+  # ----------------------------------------------------------------
+  # 構造化ログ出力先
+  # ----------------------------------------------------------------
+  - name: "structured-log"
+    description: "JSON 構造化ログの出力先 (CTP-001)。stdout またはログファイル。ローテーション・転送は導入先のログ運用に委ねる"
+    paths:
+      - pattern: "構造化ログ出力先(stdout またはログファイル)"
+        content_type: "application/x-ndjson"
+        max_size: "1KB/行"
+        purpose: "1 イベント 1 行 JSON の構造化ログ。message_id・Topic・Subscription・イベント種別を含み、どのメッセージのどの Subscription 配信が失敗したかを特定できる粒度 (CTP-001 / CTR-002)。スキーマは schemas.log_line_json"
+        rdra_info: "ログ"
+        writers:
+          - uc: "(全 UC 共通)tier-daemon-worker / tier-ops-cli の全処理"
+            operations: ["PUT"]
+        readers:
+          - uc: "構造化ログを調査する"
+            operations: ["GET"]
+        lifecycle:
+          retention: "保管 90 日目安 (NFR C.6.1.1)。ローテーションは導入先運用に委ねる"
+
+# ----------------------------------------------------------------
+# JSON ファイルの内部スキーマ (情報.tsv = data_architecture.entities に基づく)
+# ----------------------------------------------------------------
+schemas:
+  - name: "manifest_json"
+    applies_to: "manifest/{message_id}.json"
+    rdra_info: "Manifest (E-007) / メッセージ (E-006) / Archiveファイル (E-010 メタデータ)"
+    description: "メッセージ別の配送管理レコード。配送イベント追記 + Subscription 別現在状態。配送状態の正は常にこのファイル (CTR-003)"
+    fields:
+      - name: "message_id"
+        type: "string"
+        nullable: false
+        description: "message_id。収集時刻 + Topic + 元ファイル名から採番 (SR-002)。ファイル名と一致"
+      - name: "topic"
+        type: "string"
+        nullable: false
+        description: "Topic 名"
+      - name: "original_file_name"
+        type: "string"
+        nullable: false
+        description: "元ファイル名(Subscription 配置時のファイル名)"
+      - name: "collected_at"
+        type: "datetime"
+        nullable: false
+        description: "収集時刻"
+      - name: "status"
+        type: "string (enum)"
+        nullable: false
+        description: "メッセージ配送状態。値: collected(収集済) / archived(Archive保存済) / delivering(配信中) / delivered(配信済) / failed(配信失敗) / retrying(リトライ中) / dlq(DLQ隔離)"
+      - name: "archive_path"
+        type: "string"
+        nullable: true
+        description: "Archive 保存先パス (archive/{topic}/{message_id})。Archive 保存時に付与"
+      - name: "saved_at"
+        type: "datetime"
+        nullable: true
+        description: "Archive 保存日時。Archive 保存時に付与"
+      - name: "retention_deadline"
+        type: "datetime"
+        nullable: true
+        description: "Archive 保持期限(保存日時 + archive_retention 日)。Archive 保存時に付与"
+      - name: "subscriptions"
+        type: "array<object>"
+        nullable: false
+        description: "Subscription 別配送状態(E-007 subscription_delivery_status)。要素: { subscription: string, status: delivered / failed / dlq, delivered_at: datetime?, last_error: string? }。冪等再開 (SR-003) は未配信 Subscription の判定にこれを参照する"
+      - name: "retry_count"
+        type: "integer"
+        nullable: false
+        description: "リトライ回数(初期値 0。リトライ処理が更新し、retry_max_count 超過で dlq 隔離)"
+      - name: "delivered_at"
+        type: "datetime"
+        nullable: true
+        description: "配送日時(全 Subscription delivered 時の完了日時)"
+      - name: "replay_records"
+        type: "array<object>"
+        nullable: true
+        description: "再送(Replay)記録(条件「Replay記録」)。要素: { replayed_at: datetime, target_subscriptions: array<string>, result: string }。再送の配送履歴も Manifest に記録する (SP-102)"
+      - name: "delivery_events"
+        type: "array<object>"
+        nullable: true
+        description: "配送イベントの追記ログ。要素: { at: datetime, subscription: string?, event_type: string, detail: string? }。監査 (NFR E.7.1.1) 用"
+
+  - name: "dlq_meta_json"
+    applies_to: "dlq/{topic}/{message_id}.meta.json"
+    rdra_info: "DLQ (E-008)"
+    description: "DLQ 隔離メッセージのメタデータ。運用者の対処判断(再送/破棄)の根拠"
+    fields:
+      - name: "message_id"
+        type: "string"
+        nullable: false
+        description: "隔離メッセージの message_id。隔離ファイル名と一致"
+      - name: "topic"
+        type: "string"
+        nullable: false
+        description: "Topic 名(隔離ディレクトリと一致)"
+      - name: "isolation_reason"
+        type: "string"
+        nullable: false
+        description: "隔離理由(リトライ上限超過の原因となった恒久的エラーの内容)"
+      - name: "failure_count"
+        type: "integer"
+        nullable: false
+        description: "失敗回数(隔離時点のリトライ累計)"
+      - name: "isolated_at"
+        type: "datetime"
+        nullable: false
+        description: "隔離日時"
+
+  - name: "processed_json"
+    applies_to: "processed/{topic}.json"
+    rdra_info: "処理済み管理 (E-009)"
+    description: "Topic 別の処理済み管理ファイル。元ファイル処理方式が copy(残す)の収集ソース、および push 受信モード(inbox)の二重検知・done マーカー残置時に重複収集・重複取り込みを防止する。エントリ追記型"
+    fields:
+      - name: "topic"
+        type: "string"
+        nullable: false
+        description: "Topic 名(ファイル名と一致)"
+      - name: "entries"
+        type: "array<object>"
+        nullable: false
+        description: "処理済みエントリの一覧。要素は以下の 2 フィールドを持つ"
+      - name: "entries[].source_file_identifier"
+        type: "string"
+        nullable: false
+        description: "収集元ファイル識別子(ファイル名・収集元パス・push 受信モードの done マーカー名等)。エントリ内で一意。push 受信モードでは fsnotify とフォールバックポーリングの二重検知防止にも使用"
+      - name: "entries[].processed_at"
+        type: "datetime"
+        nullable: false
+        description: "処理済み判定日時"
+
+  - name: "log_line_json"
+    applies_to: "構造化ログ出力先(1 行 = 1 JSON オブジェクト)"
+    rdra_info: "ログ (E-013)"
+    description: "JSON 構造化ログの 1 イベント。どのメッセージのどの Subscription 配信が失敗したかを特定できる粒度 (CTP-001)"
+    fields:
+      - name: "logged_at"
+        type: "datetime"
+        nullable: false
+        description: "出力日時"
+      - name: "message_id"
+        type: "string"
+        nullable: true
+        description: "対象メッセージの message_id(メッセージに紐付かないイベントでは null)"
+      - name: "topic"
+        type: "string"
+        nullable: true
+        description: "Topic 名"
+      - name: "subscription"
+        type: "string"
+        nullable: true
+        description: "Subscription 名(どの Subscription の配信イベントかを記録)"
+      - name: "event_type"
+        type: "string"
+        nullable: false
+        description: "イベント種別(collect / archive / fanout / retry / dlq / replay / startup / shutdown 等)"
+      - name: "error_detail"
+        type: "text"
+        nullable: true
+        description: "エラー内容(エラーイベント時のみ)"
+
+_notes:
+  - "シングルバイナリの配置先 (/opt/file-pubsub/file-pubsub 等。UC「シングルバイナリ/Dockerイメージを配置する」) は配布物であり、データディレクトリレイアウトの対象外"
+  - "メトリクス (E-012) はインメモリ集計で永続化しない(/metrics で公開、再起動でリセット。storage_mapping: cache)。外部監視基盤側で蓄積する"
+  - "認証情報 (E-005) は config.yaml 内の参照(環境変数参照 ${ENV_VAR} / 鍵ファイルパス)として保持し、独立ファイルを持たない (CTP-002)"

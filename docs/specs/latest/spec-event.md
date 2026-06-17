@@ -4,9 +4,9 @@
 
 | 項目 | 内容 |
 |------|------|
-| Event ID | 20260612_160204_spec_generation |
-| Created At | 2026-06-12T17:01:58+09:00 |
-| Source | 初期構築 (trigger: rdra/nfr/arch 20260612) |
+| Event ID | 20260617_121332_harden_idempotency |
+| Created At | 2026-06-17T12:13:32+09:00 |
+| Source | 初期構築 20260612_160204 → push 受信モード追加 20260617_020637 → completion ネスト化 20260617_081425 → 冪等性ハードニング(message_id 同一秒衝突の連番回避 SPEC-007-01・marker+copy 残存マーカー SPEC-014-02)20260617_121332 (trigger: rdra 20260617_121332_harden_idempotency) の累積スナップショット |
 | UC 総数 | 19 |
 | API 総数 | 2 |
 | 非同期イベント総数 | 0 |

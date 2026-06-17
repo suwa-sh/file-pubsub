@@ -16,6 +16,7 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/config"
 	"github.com/suwa-sh/file-pubsub/internal/gateway/metricsreg"
 	"github.com/suwa-sh/file-pubsub/internal/gateway/store"
+	"github.com/suwa-sh/file-pubsub/internal/gateway/watch"
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 	"github.com/suwa-sh/file-pubsub/internal/usecase"
 )
@@ -80,21 +81,58 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for _, t := range d.Cfg.Topics {
 		subs += len(t.Subscriptions)
 	}
-	_, _ = fmt.Fprintf(d.Stdout, "file-pubsub serve: lock acquired (pid %d), topics=%d subscriptions=%d, metrics on :%d, polling every %ds\n",
-		os.Getpid(), len(d.Cfg.Topics), subs, d.Cfg.MetricsPort, d.Cfg.PollingInterval)
+	inboxDirs := d.inboxDirs()
+	_, _ = fmt.Fprintf(d.Stdout, "file-pubsub serve: lock acquired (pid %d), topics=%d subscriptions=%d inbox=%d, metrics on :%d, polling every %ds\n",
+		os.Getpid(), len(d.Cfg.Topics), subs, len(inboxDirs), d.Cfg.MetricsPort, d.Cfg.PollingInterval)
 	d.Log.Emit(logging.Event{EventType: "startup"})
 
 	// 実行中のサイクルは停止シグナル後でも完了まで走らせる (SR-007)。
 	cycleCtx := context.WithoutCancel(ctx)
+
+	// 主ポーリング・inbox の fsnotify イベント・フォールバックポーリングを単一の triggers へ
+	// 集約し、単一コンシューマが RunCycle を直列実行する。直列化により二重検知 (イベント駆動 +
+	// フォールバック) でもサイクルが重ならず冪等になる (LR-205)。triggers はバッファ 1 で coalesce。
+	triggers := make(chan struct{}, 1)
+	fire := func() {
+		select {
+		case triggers <- struct{}{}:
+		default:
+		}
+	}
+
 	ticker := time.NewTicker(time.Duration(d.Cfg.PollingInterval) * time.Second)
 	defer ticker.Stop()
+	go tick(ctx, ticker.C, fire)
+
+	// push 受信モード: 受信ディレクトリを fsnotify で監視 + フォールバックポーリング (REQ-013)。
+	if len(inboxDirs) > 0 {
+		// フォールバックポーリングは fsnotify の成否によらず常に起動する。fsnotify 初期化や
+		// 監視登録に失敗しても (NFS 等)、設定した fallback_poll_interval で確実に取り込む。
+		fb := time.NewTicker(time.Duration(d.minFallbackInterval()) * time.Second)
+		defer fb.Stop()
+		go tick(ctx, fb.C, fire)
+
+		w, err := watch.New(inboxDirs, func(dir string, err error) {
+			d.Log.Emit(logging.Event{EventType: "collect_failed", ErrorDetail: fmt.Sprintf("watch inbox %q failed: %v. relying on fallback polling for this directory", dir, err)})
+		})
+		if err != nil {
+			d.Log.Emit(logging.Event{EventType: "collect_failed", ErrorDetail: fmt.Sprintf("init fsnotify watcher failed: %v. relying on fallback polling for inbox topics", err)})
+		} else {
+			defer func() { _ = w.Close() }()
+			go w.Run(ctx, func(err error) {
+				d.Log.Emit(logging.Event{EventType: "collect_failed", ErrorDetail: fmt.Sprintf("fsnotify watcher error: %v. fallback polling continues", err)})
+			})
+			go forward(ctx, w.Trigger(), fire)
+		}
+	}
+
 	d.Pipeline.RunCycle(cycleCtx)
 loop:
 	for {
 		select {
 		case <-ctx.Done():
 			break loop
-		case <-ticker.C:
+		case <-triggers:
 			d.Pipeline.RunCycle(cycleCtx)
 		}
 	}
@@ -104,4 +142,61 @@ loop:
 	_ = srv.Shutdown(shutdownCtx)
 	d.Log.Emit(logging.Event{EventType: "shutdown"})
 	return nil
+}
+
+// inboxDirs は push 受信モード (type=inbox) の受信ディレクトリ一覧を返す。
+func (d *Daemon) inboxDirs() []string {
+	var dirs []string
+	for _, t := range d.Cfg.Topics {
+		if t.Source.Type == config.SourceTypeInbox {
+			dirs = append(dirs, t.Source.Directory)
+		}
+	}
+	return dirs
+}
+
+// minFallbackInterval は inbox トピックのフォールバックポーリング間隔の最小値 (秒) を返す。
+// 取りこぼし対策として、最も短い間隔で全 inbox をフォールバックポーリングする。
+func (d *Daemon) minFallbackInterval() int {
+	min := 0
+	for _, t := range d.Cfg.Topics {
+		if t.Source.Type != config.SourceTypeInbox {
+			continue
+		}
+		fi := t.Source.FallbackPollInterval
+		if fi <= 0 {
+			fi = d.Cfg.PollingInterval
+		}
+		if min == 0 || fi < min {
+			min = fi
+		}
+	}
+	if min == 0 {
+		min = d.Cfg.PollingInterval
+	}
+	return min
+}
+
+// tick は ctx がキャンセルされるまで c の各 tick で fire を呼ぶ。
+func tick(ctx context.Context, c <-chan time.Time, fire func()) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c:
+			fire()
+		}
+	}
+}
+
+// forward は ctx がキャンセルされるまで src の各受信で fire を呼ぶ。
+func forward(ctx context.Context, src <-chan struct{}, fire func()) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-src:
+			fire()
+		}
+	}
 }
