@@ -2,9 +2,9 @@
 # スキーマ: dist-spec references/spec-event-schema.md (version 1.0)
 # UC 名はディレクトリ名表記(名称中の "/" は "-" に置換)を用いる
 version: "1.0"
-event_id: "20260612_160204_spec_generation"
-created_at: "2026-06-12T17:01:58+09:00"
-source: "初期構築 (trigger: rdra/nfr/arch 20260612)"
+event_id: "20260617_121332_harden_idempotency"
+created_at: "2026-06-17T12:13:32+09:00"
+source: "初期構築 20260612_160204 → push 受信モード追加 20260617_020637 → completion ネスト化 20260617_081425 → 冪等性ハードニング(message_id 同一秒衝突の連番回避 SPEC-007-01・marker+copy 残存マーカー SPEC-014-02)20260617_121332 (trigger: rdra 20260617_121332_harden_idempotency) の累積スナップショット"
 
 # UC 一覧(業務/BUC/UC の階層)— 2 業務 / 5 BUC / 19 UC
 use_cases:

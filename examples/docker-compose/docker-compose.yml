@@ -14,6 +14,7 @@ services:
       - ./config.yaml:/etc/file-pubsub/config.yaml:ro
       - ./data:/data
       - ./sources/local:/sources/local
+      - ./sources/inbox:/sources/inbox # push 受信モード (topic: receipts) の受信ディレクトリ
     ports:
       - "19090:9090" # /metrics と /healthz (ホスト側はポート衝突しにくい 19090)
     depends_on:

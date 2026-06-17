@@ -1,8 +1,10 @@
 コンテキスト	バリエーション	値	説明
-配信構成管理	収集ソース種別	FTP、SFTP、SCP、ローカルディレクトリ	Producerが出力したファイルの収集元の種別。Topicごとに設定で切り替えられ、後段(Archive/Fan-out/Manifest)はソース種別に依存しない
-配信構成管理	元ファイル処理方式	回収(GET後DELETE)、残す(copy)	収集後の元ファイルの扱い。既定はGET後DELETEで回収し、copy選択時は処理済み管理で同じファイルの重複収集を防ぐ
+配信構成管理	収集ソース種別	FTP、SFTP、SCP、ローカルディレクトリ、push受信(inbox)	Producerが出力したファイルの収集元の種別。FTP/SFTP/SCP/ローカルディレクトリはpull型(file-pubsubがList→Fetch→Delete)、push受信(inbox)はProducerが受信ディレクトリへ直接putしたファイルを取り込むpush型。Topicごとに設定で切り替えられ既存pull型と排他で、後段(Archive/Fan-out/Manifest)はソース種別に依存しない
+配信構成管理	元ファイル処理方式	回収(pull型はGET後DELETE / push型は受信ディレクトリから削除)、残す(copy)	収集後の元ファイルの扱い。既定は回収で、pull型はGET後DELETE、push受信モードは受信ディレクトリのファイル(doneマーカー方式ではマーカーも)を削除する。残す(copy)選択時は処理済み管理で同じファイルの重複収集・重複取り込みを防ぐ
 配信構成管理	Subscription種別	current、next、test	Consumerごとの配送先の種別。Consumer更改時のCurrent/Next並行稼働や検証用(test)など、用途に応じてSubscriptionを追加できる
 配信構成管理	Consumer取り込みタイミング	即時取り込み、夜間バッチ	ConsumerがSubscriptionディレクトリからファイルを取得・取り込むタイミングの区分。Subscriptionごとに配送が独立しており、タイミングの差を吸収する
 メッセージ配送管理	配信方式	通常配信(Fan-out)、再送(Replay)	Subscriptionへのファイル配置の契機の区分。通常配信は収集後に全Subscriptionへ複製し、再送はArchiveからTopic・期間・宛先Subscriptionを指定して再配置する。いずれもManifestに記録する
 配信構成管理	認証方式	YAML平文記述、環境変数参照(${ENV_VAR})、鍵ファイルパス指定	リモート収集(FTP/SFTP/SCP)の認証情報の指定方式。平文記述も許容しつつ、環境変数参照と鍵ファイルパス指定を推奨としてREADMEで案内する
 基盤運用管理	配布形態	シングルバイナリ、Dockerコンテナイメージ	file-pubsubの導入時の配布形態の区分。レガシー現場のLinuxサーバには追加ランタイム不要のGoシングルバイナリ、Windows開発PCでの動作確認にはDockerコンテナイメージ(docker compose一式)を使い分ける
+配信構成管理	取り込みトリガー方式	イベント駆動(fsnotify)、フォールバックポーリング	push受信モードでの取り込み契機の方式。fsnotifyによるイベント駆動で受信ディレクトリのファイル出現を即時検知し(共有FSがローカルディスクなら即時反応)、fsnotifyを取りこぼす環境(NFS/SMB)に備え低頻度のフォールバックポーリングを併用する。両者はハイブリッドで動作し、同一ファイルを二重検知しても処理済み管理・message_id採番で冪等に取り込む
+配信構成管理	完了検知方式	安定判定、rename、doneマーカー	Producerの出力パターンに応じて書き込み完了を判定する方式。completion設定で mode(stability/rename/marker)と suffix を指定する。安定判定はサイズ・mtimeの安定待ち(既存stability_check)、renameは一時拡張子付きの名前(既定.tmp)から正式名への出現、doneマーカーは対象xxxに対応するマーカー(既定.done)の出現でxxxを取り込み対象にする(マーカー自体は配信対象外)。renameの一時拡張子・doneマーカーの拡張子はsuffixでProducer規約に合わせ設定可能(.part/.ok等)。収集ソース設定で選択する

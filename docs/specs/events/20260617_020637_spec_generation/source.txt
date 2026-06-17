@@ -1,0 +1,22 @@
+Producer push(put)型の受信モード追加 (GitHub Issue #11)
+
+trigger_event:
+- requirements/rdra: REQ-012 / REQ-013 / REQ-014 (push 受信モード = inbox)
+
+UC「ファイルを収集する(Collect)」への差分仕様化。
+既存 pull 型収集(FTP/SFTP/SCP/local の List → Fetch → Delete)を維持したまま、
+Producer が file-pubsub アクセス可能な受信ディレクトリへ直接 put したファイルを取り込む
+push(put)受信モード(source.type=inbox)を追加する。
+
+確定した設計判断:
+- 収集ソース種別 source.type に独立値 "inbox" を追加(既存 pull 型 ftp/sftp/scp/local と排他。
+  local 拡張ではなく新値)。受信ディレクトリ設定キーは pull 型と共通の source.directory を流用。
+- 取り込みトリガーはハイブリッド: fsnotify イベント駆動 + 低頻度フォールバックポーリング
+  (fallback_poll_interval、polling_interval とは別)。二重検知は処理済み管理・message_id 採番で冪等。
+- 完了検知方式 completion を設定で選択: stability(既定) / rename / marker(xxx.done)。
+- 元ファイル処理は既存(回収=delete / 残す=copy)を流用。対象が受信ディレクトリのファイル。
+  marker 方式では取り込み後に xxx.done も後始末。
+- 後段(Archive / Fan-out / Manifest / Retry / Retention)は既存処理をソース種別非依存で流用(変更なし)。
+
+イベントソーシング: 変更したファイルのみを完全版で event 配下に置き、latest にも同内容を反映。
+既存 UC は削除しない(specs は実装の正本)。

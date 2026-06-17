@@ -24,6 +24,7 @@
 | `docs/specs/latest/` | **実装の正本**。UC 別 spec.md / tier-*.md、cross-cutting(file レイアウト・メトリクス契約・CLI 規約) |
 
 - 仕様に無いものを実装で発明しない。実装中に仕様の不足・矛盾を見つけたら、コードでごまかさず distillery の差分更新に戻す
+- spec を手動で差分編集したら、`docs/specs/events/{event_id}/` に差分イベント(変更した UC + cross-cutting + decisions + `_changes.md` + `source.txt`)を作り、`docs/specs/latest/spec-event.yaml` のヘッダ(event_id/created_at/source)を更新して `generateSpecEventMd.js` で md 再生成する。これを怠ると spec のイベントが usdm/rdra と揃わず spec-event.yaml が stale 化する(本リポジトリの spec イベントは「フルスナップショット」ではなく差分スタイルで運用)。`validateSpecEvent.js docs/specs/latest` と `validateAllYaml.js` で検証する
 
 ### 2. 実装は distillery specs に従う
 
@@ -68,6 +69,18 @@ qlty fmt --all                                                        # formatte
 
 **(d) 取り込み**: **反証しきれない指摘は必ず修正する**(回帰テスト追加 → 再テスト → qlty ゲート確認)。反証内訳(指摘数 / 不採用数と根拠 / 対応数)をコミットメッセージまたは PR に残す。
 
+### 7. 完了の定義(DoD)— 「完了」と報告する前に必ず確認する
+
+`go test` が通っただけで「完了」と早期宣言しない。機能を完了と報告する前に、以下を**すべて**満たしているか確認する(満たしていない項目があれば、ユーザーの指示を待たず自分で実施する):
+
+1. **distillery 同期**: `dist-requirements` **と `dist-spec` の両方**を実施した。usdm / rdra / specs のイベントと `latest/` が同期し、`spec-event.yaml` が最新の event_id を指す(stale でない)。`validateSpecEvent.js` / `validateRequirements.js` / `validateChanges.js` が PASS
+2. **利用者向けドキュメント**: ルート `README.md` / `README.ja.md` / `examples/` を機能に合わせて更新した(docs/specs だけで満足しない)
+3. **テスト**: ATDD/TDD が GREEN、`go test ./... -race` 全 PASS、`go vet` / `gofmt` clean、`qlty check --fail-level medium` exit 0
+4. **レビュー(§6)**: サブエージェント + Codex に加え、**spec↔実装のトレーサビリティ**(BDD・ビジネスルール・設定スキーマ → 実装 + テストの 1 対 1)を確認し、指摘を反証/取り込みした
+5. **自動生成物**: `docs/README.md` を再生成した(mermaid 破損なし)
+
+このチェックリストを飛ばして「実現できました」と言わない。早期宣言は本リポジトリで繰り返した失敗(spec 同期・利用者ドキュメント・専用レビューの失念)の再発原因。
+
 ## 実装規約
 
 - **コメントは日本語**で書く(仕様の制約・設計判断を示す最小限のもの。コード・識別子・エラーメッセージ・ログは英語)
@@ -100,6 +113,8 @@ docker compose down -v
 ## 横断的な注意点
 
 - **データ整合の原則**: 元ファイルの削除は Archive 保存 + Manifest 記録の後のみ。配信は at-least-once(クラッシュ後再開で再配置があり得る)。Archive の retention 削除は決着済み(delivered/dlq)のみ
+- **冪等系 I/O は fail-closed**: 一意採番・重複/処理済み照合(`Manifests.Exists` / `Processed.IsProcessed` 等)の I/O が失敗したら、必ず安全側に倒す — 上書きを避ける・早期取り込みを避ける(`skipProcessed`/`markerProcessed`/`uniqueMessageID` の方針)。エラーを「衝突なし/未処理」と誤って楽観視(fail-open)しない。レビューで何度も指摘される定番の落とし穴
+- **Archive 昇格/finalize 失敗時の再収集は仕様(意図的)**: `collectFile` で Promote/finalizeArchive が失敗すると原本を残し、次サイクルで再収集して重複し得る(高々 1 メッセージ。Archive は durable で損失なし)。これは at-least-once の許容範囲であってバグではない。レビュー指摘は反証してよい(`resumeArchiving` は原本後始末をしない設計)
 - **single-writer**: manifest を書くのは lock 保持者だけ(serve または replay)。status は読み取り専用
 - **CI**(`.github/workflows/ci.yml`): test(race+coverage)/ qlty / goreleaser check / docker build / compose E2E。GitHub Actions は SHA ピン + 最小 permissions を維持する
 - **リリース**: タグ `v*` push で goreleaser(Releases バイナリ)+ ghcr.io イメージ公開(`.github/workflows/release.yml`)

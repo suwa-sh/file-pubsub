@@ -1,0 +1,22 @@
+GitHub Issue #11 変更要望: Producer push(put)型の受信モードに対応したい
+URL: https://github.com/suwa-sh/file-pubsub/issues/11
+labels: enhancement
+
+## 【背景・現状】
+現状は pull 型のみ。file-pubsub が polling_interval ごとにリモート領域(FTP/SFTP/SCP/local)を List → Fetch → Delete で取りに行く。RDRA 上 Producer は「無改修・リモート出力」。
+
+## 【要望】
+1. 既存 pull 型は維持し、push(put)受信モードを追加する(両方残す)。
+2. 受け口は共有/ローカルディレクトリへの直接配置。Producer が file-pubsub のアクセスできる受信ディレクトリにファイルを put する。
+3. 取り込みトリガーはハイブリッド: fsnotify(イベント駆動)+ フォールバックの低頻度ポーリング。共有 FS がローカルディスクなら即時反応、NFS/SMB ならポーリングで拾う(両対応。共有FSの実体は環境により両方あり得る/未定)。
+4. 書き込み完了の検知方式を、Producer の出力パターンに応じて設定で選べるようにする:
+   - 安定判定(既存 stability_check: サイズ・mtime の安定)
+   - rename 方式(xxx.csv.tmp → xxx.csv のように一時名から正式名へリネーム。正式名の出現で取り込み)
+   - done マーカー方式(xxx.done が置かれたら xxx を取り込み対象にする)
+5. 取り込み後の Archive / Fan-out / Manifest / Retry / Retention は既存のまま流用する。
+
+## 【詰めるべき論点】
+- RDRA: Producer / リモートファイル領域 の位置づけ変更(リモート出力 → file-pubsub 受信領域へ put)。push モード用のイベント・状態の追加。
+- 元ファイル処理: pull の delete/copy が、push では「受信ディレクトリのファイルを file-pubsub が delete/残す」に意味が変わる。done マーカー方式ではマーカーの後始末も論点。
+- 設定スキーマ: source.type に新モード(例 local-watch/inbox)を足すか既存 local を拡張するか。完了検知方式(completion: stability|rename|marker)の項目設計。
+- 横断仕様への影響: object-storage-schema / メトリクス契約 / CLI 規約。

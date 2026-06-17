@@ -2,19 +2,19 @@
 
 > FTP GET/DELETE 型のレガシーファイル IF を、Producer を変更せずに Pub/Sub 風の配信モデル(Topic / Subscription / Archive / Fan-out / Manifest)へ変換する軽量ブリッジ
 
-**最終更新**: 2026-06-12 16:02:04 spec generation (specs)
+**最終更新**: 2026-06-17 12:13:32 harden idempotency (specs)
 
 ## 成果物一覧
 
 | ドメイン | 最新 | イベント数 |
 |---------|------|-----------:|
-| [USDM（要求分解）](#usdm要求分解) | [usdm/latest/](usdm/latest/) | 1 |
-| [RDRA（要件定義）](#rdra要件定義) | [rdra/latest/](rdra/latest/) | 1 |
+| [USDM（要求分解）](#usdm要求分解) | [usdm/latest/](usdm/latest/) | 4 |
+| [RDRA（要件定義）](#rdra要件定義) | [rdra/latest/](rdra/latest/) | 4 |
 | [NFR（非機能要求）](#nfr非機能要求) | [nfr/latest/](nfr/latest/) | 1 |
 | [Arch（アーキテクチャ）](#archアーキテクチャ) | [arch/latest/](arch/latest/) | 1 |
 | [Infra（インフラ設計）](#infraインフラ設計) | - | 0 |
 | [Design（デザイン）](#designデザイン) | - | 0 |
-| [Specs（詳細仕様）](#specs詳細仕様) | [specs/latest/](specs/latest/) | 1 |
+| [Specs（詳細仕様）](#specs詳細仕様) | [specs/latest/](specs/latest/) | 4 |
 
 ## USDM（要求分解）
 
@@ -25,8 +25,8 @@
 
 | 項目 | 値 |
 |------|-----|
-| 要求数 | 11 |
-| 仕様数 | 24 |
+| 要求数 | 14 |
+| 仕様数 | 31 |
 
 ## RDRA（要件定義）
 
@@ -46,11 +46,11 @@
 | 項目 | 値 |
 |------|-----|
 | アクター | 2 |
-| 外部システム | 5 |
+| 外部システム | 6 |
 | 情報 | 13 |
 | 状態モデル | 5 |
 | 条件 | 13 |
-| バリエーション | 7 |
+| バリエーション | 9 |
 | 業務 | 2 |
 | BUC | 5 |
 | UC | 19 |
@@ -71,8 +71,9 @@ graph TB
   Consumerシステム担当者(["Consumerシステム担当者"]):::actor --> SYS
   SYS --> Producerシステム(["Producerシステム"]):::external
   SYS --> リモートファイル領域(["リモートファイル領域"]):::external
-  SYS --> ConsumerCurrent(["Consumerシステム(Current)"]):::external
-  SYS --> ConsumerNext(["Consumerシステム(Next)"]):::external
+  SYS --> 受信ディレクトリ(["受信ディレクトリ"]):::external
+  SYS --> Consumerシステム_Current_(["Consumerシステム Current "]):::external
+  SYS --> Consumerシステム_Next_(["Consumerシステム Next "]):::external
   SYS --> 監視基盤(["監視基盤"]):::external
   classDef actor fill:#2563EB,color:#fff,stroke:none
   classDef external fill:#6B7280,color:#fff,stroke:none
@@ -228,6 +229,11 @@ SUC --> SGW["共有 gateway 層"]
 | 5 | Specs | [API スタイル選定: HTTP API は観測専用 2 エンドポイント(Prometheus pull)のみとし、REST CRUD API を設けない](specs/events/20260612_160204_spec_generation/decisions/spec-decision-001.yaml) | approved |
 | 6 | Specs | [非同期境界: メッセージング基盤(MQ)を使わず、ディレクトリ + Manifest によるファイルベース Pub/Sub を採用する](specs/events/20260612_160204_spec_generation/decisions/spec-decision-002.yaml) | approved |
 | 7 | Specs | [データ永続化: RDB 正規化をせず、ファイルレイアウト + メッセージ別 JSON Manifest を採用する](specs/events/20260612_160204_spec_generation/decisions/spec-decision-003.yaml) | approved |
+| 8 | Specs | [push 受信モードの選定: source.type に独立値 inbox を追加し、既存 local を拡張しない](specs/events/20260617_020637_spec_generation/decisions/spec-decision-004.yaml) | approved |
+| 9 | Specs | [push 受信モードの取り込みトリガー: fsnotify イベント駆動 + 低頻度フォールバックポーリングのハイブリッド](specs/events/20260617_020637_spec_generation/decisions/spec-decision-005.yaml) | approved |
+| 10 | Specs | [完了検知方式を設定で選択(安定判定 / rename / done マーカー)し、既定は安定判定とする](specs/events/20260617_020637_spec_generation/decisions/spec-decision-006.yaml) | approved |
+| 11 | Specs | [completion を {mode, suffix} のネスト構造にし、rename/marker のサフィックスを設定可能にする](specs/events/20260617_081425_configurable_completion_suffix/decisions/spec-decision-007.yaml) | approved |
+| 12 | Specs | [message_id の同一秒衝突を連番付与で回避し、marker+copy の残存マーカーは新契機にしない](specs/events/20260617_121332_harden_idempotency/decisions/spec-decision-008.yaml) | approved |
 
 ## イベント履歴
 
@@ -238,6 +244,15 @@ SUC --> SGW["共有 gateway 層"]
 | 2026-06-12 15:33:53 | NFR（非機能要求） | [20260612_153353_nfr_initial_build](nfr/events/20260612_153353_nfr_initial_build) |
 | 2026-06-12 15:48:33 | Arch（アーキテクチャ） | [20260612_154833_arch_initial_build](arch/events/20260612_154833_arch_initial_build) |
 | 2026-06-12 16:02:04 | Specs（詳細仕様） | [20260612_160204_spec_generation](specs/events/20260612_160204_spec_generation) |
+| 2026-06-17 01:46:53 | USDM（要求分解） | [20260617_014653_add_push_receive_mode](usdm/events/20260617_014653_add_push_receive_mode) |
+| 2026-06-17 01:46:53 | RDRA（要件定義） | [20260617_014653_add_push_receive_mode](rdra/events/20260617_014653_add_push_receive_mode) |
+| 2026-06-17 02:06:37 | Specs（詳細仕様） | [20260617_020637_spec_generation](specs/events/20260617_020637_spec_generation) |
+| 2026-06-17 08:14:25 | USDM（要求分解） | [20260617_081425_configurable_completion_suffix](usdm/events/20260617_081425_configurable_completion_suffix) |
+| 2026-06-17 08:14:25 | RDRA（要件定義） | [20260617_081425_configurable_completion_suffix](rdra/events/20260617_081425_configurable_completion_suffix) |
+| 2026-06-17 08:14:25 | Specs（詳細仕様） | [20260617_081425_configurable_completion_suffix](specs/events/20260617_081425_configurable_completion_suffix) |
+| 2026-06-17 12:13:32 | USDM（要求分解） | [20260617_121332_harden_idempotency](usdm/events/20260617_121332_harden_idempotency) |
+| 2026-06-17 12:13:32 | RDRA（要件定義） | [20260617_121332_harden_idempotency](rdra/events/20260617_121332_harden_idempotency) |
+| 2026-06-17 12:13:32 | Specs（詳細仕様） | [20260617_121332_harden_idempotency](specs/events/20260617_121332_harden_idempotency) |
 
 ---
 

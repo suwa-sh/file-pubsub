@@ -108,12 +108,12 @@ func Validate(c *Config) ValidationErrors {
 // validateSource はソース定義 1 件を検査し、違反を add で報告する。
 func validateSource(s Source, keyPath string, add func(keyPath, cause, remedy string)) {
 	switch s.Type {
-	case SourceTypeLocal, SourceTypeFTP, SourceTypeSFTP, SourceTypeSCP:
+	case SourceTypeLocal, SourceTypeFTP, SourceTypeSFTP, SourceTypeSCP, SourceTypeInbox:
 	case "":
-		add(keyPath+".type", "source type is missing", "set type to one of local / ftp / sftp / scp")
+		add(keyPath+".type", "source type is missing", "set type to one of local / ftp / sftp / scp / inbox")
 		return
 	default:
-		add(keyPath+".type", fmt.Sprintf("source type %q is not supported", s.Type), "set type to one of local / ftp / sftp / scp")
+		add(keyPath+".type", fmt.Sprintf("source type %q is not supported", s.Type), "set type to one of local / ftp / sftp / scp / inbox")
 		return
 	}
 
@@ -128,7 +128,8 @@ func validateSource(s Source, keyPath string, add func(keyPath, cause, remedy st
 	default:
 		add(keyPath+".original_file_handling", fmt.Sprintf("original file handling %q is not supported", s.OriginalFileHandling), "set original_file_handling to delete or copy")
 	}
-	if s.StabilityCheck.Interval <= 0 {
+	// 安定判定は pull 型と inbox の完了検知=stability で使う。inbox の rename / marker では使わない (SP-014)。
+	if requiresStabilityCheck(s) && s.StabilityCheck.Interval <= 0 {
 		add(keyPath+".stability_check.interval", "stability check interval must be a positive number of seconds", "set stability_check.interval to a value such as 10")
 	}
 	for k, p := range s.ExcludePatterns {
@@ -137,7 +138,11 @@ func validateSource(s Source, keyPath string, add func(keyPath, cause, remedy st
 		}
 	}
 
-	if s.Type != SourceTypeLocal {
+	switch s.Type {
+	case SourceTypeInbox:
+		validateInbox(s, keyPath, add)
+	case SourceTypeFTP, SourceTypeSFTP, SourceTypeSCP:
+		// リモート収集は host と認証情報が要る。local / inbox はローカル FS のため不要。
 		if s.Host == "" {
 			add(keyPath+".host", "host is required for remote source types", "set the host of the remote file area")
 		}
@@ -147,5 +152,29 @@ func validateSource(s Source, keyPath string, add func(keyPath, cause, remedy st
 		if s.Auth.Password == "" && s.Auth.KeyFile == "" {
 			add(keyPath+".auth", "either password or key_file is required for remote source types", "set auth.password (a ${ENV_VAR} reference is recommended) or auth.key_file")
 		}
+	}
+}
+
+// requiresStabilityCheck は安定判定設定が必須かを返す。pull 型は常に必須。
+// inbox は完了検知 mode=stability (既定) のときだけ必須で、rename / marker では使わない (SPEC-014-03)。
+func requiresStabilityCheck(s Source) bool {
+	if s.Type != SourceTypeInbox {
+		return true
+	}
+	return s.Completion.Mode == "" || s.Completion.Mode == CompletionStability
+}
+
+// validateInbox は push 受信モード固有の設定を検査する (REQ-013, REQ-014, SPEC-014-03)。
+// 受信ディレクトリは directory を pull 型と共通で流用し、host / auth は使わない。
+// completion.suffix は Producer 規約に合わせたリテラル文字列で、省略時は applyDefaults が
+// mode 別の既定 (.tmp / .done) を補完するため、ここでは追加検査しない。
+func validateInbox(s Source, keyPath string, add func(keyPath, cause, remedy string)) {
+	switch s.Completion.Mode {
+	case "", CompletionStability, CompletionRename, CompletionMarker:
+	default:
+		add(keyPath+".completion.mode", fmt.Sprintf("completion mode %q is not supported", s.Completion.Mode), "set completion.mode to stability / rename / marker (default: stability)")
+	}
+	if s.FallbackPollInterval < 0 {
+		add(keyPath+".fallback_poll_interval", "fallback poll interval must not be negative", "set fallback_poll_interval to a positive number of seconds, or omit it to reuse polling_interval")
 	}
 }

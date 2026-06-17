@@ -1,0 +1,7 @@
+トリガー: RDRA 差分イベント 20260617_121332_harden_idempotency(Codex レビュー指摘の取り込み)
+
+① message_id の同一秒衝突による履歴上書きを、秒精度の形式を維持しつつ衝突時の連番付与で回避(SPEC-007-01)。
+② marker+copy の残存マーカー(処理済み)を新たな完了契機にしない=新しい未処理マーカーを待つ(SPEC-014-02)。
+
+影響 UC: ファイルを収集する(Collect)。spec.md(計算ルール message_id 採番 / 分岐条件 元ファイル処理判定 /
+BDD 追加)・tier-daemon-worker.md(処理フロー)・decisions(spec-decision-008)を更新。後段は不変。

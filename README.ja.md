@@ -29,7 +29,7 @@ file-pubsub は収集ソースと Consumer の間に入り、**Collect → Archi
 
 ```mermaid
 flowchart LR
-    P["Producer (変更不要)"] --> SRC["収集ソース (FTP / SFTP / SCP / local)"]
+    P["Producer (変更不要)"] --> SRC["収集ソース (pull: FTP / SFTP / SCP / local, または push 受信: inbox)"]
     subgraph FP["file-pubsub"]
         direction LR
         COL["Collect (GET 後 DELETE)"] --> AR["Archive (Topic 別に全保存)"]
@@ -167,18 +167,48 @@ docker compose down
 | `data_dir` | - | archive / manifest / work / dlq 等のデータルート。省略時は config.yaml のあるディレクトリ |
 | `topics[].name` | ✓ | Topic 名 (一意) |
 | `topics[].description` | - | 説明 |
-| `topics[].source.type` | ✓ | `local` / `ftp` / `sftp` / `scp` |
-| `topics[].source.host` | リモート時 ✓ | 収集元ホスト |
+| `topics[].source.type` | ✓ | pull 型: `local` / `ftp` / `sftp` / `scp` (file-pubsub が List → Fetch → Delete で取りに行く)。push 受信: `inbox` (Producer が受信ディレクトリへ直接 put する。[収集モード](#収集モード-pull--push-受信)参照) |
+| `topics[].source.host` | リモート時 ✓ | 収集元ホスト (リモート pull 型のみ。`local` / `inbox` では未使用) |
 | `topics[].source.port` | - | ポート。省略 (0) はプロトコル既定 (ftp 21 / sftp・scp 22) |
-| `topics[].source.directory` | ✓ | 収集元ディレクトリ |
-| `topics[].source.original_file_handling` | - | `delete` (GET 後 DELETE、既定) / `copy` (残す。処理済み管理で重複収集を防ぐ) |
-| `topics[].source.stability_check.interval` | ✓ | 安定待ち間隔 (秒)。サイズ・更新時刻がこの間隔で不変になるまで収集しない (書き込み中ファイルの保護) |
+| `topics[].source.directory` | ✓ | 収集元ディレクトリ。`inbox` では Producer が put する受信ディレクトリ |
+| `topics[].source.original_file_handling` | - | `delete` (Archive 保存後に DELETE / 受信ディレクトリから削除、既定) / `copy` (残す。処理済み管理で重複収集を防ぐ) |
+| `topics[].source.stability_check.interval` | pull / inbox stability 時 ✓ | 安定待ち間隔 (秒)。サイズ・更新時刻がこの間隔で不変になるまで収集しない (書き込み中ファイルの保護)。`inbox` の `completion.mode` が rename / marker の場合は不要 |
 | `topics[].source.exclude_patterns` | - | 除外 glob パターン (例 `*.tmp`) |
+| `topics[].source.completion.mode` | - | **`inbox` 専用。** 書き込み完了検知: `stability` (既定。pull 型と同じ安定待ち) / `rename` (正式名の出現で収集) / `marker` (完了マーカーの出現で収集) |
+| `topics[].source.completion.suffix` | - | **`inbox` 専用。** `rename` の一時拡張子・`marker` のマーカー拡張子。Producer の規約に合わせる。既定は rename=`.tmp` / marker=`.done`、stability では未使用 |
+| `topics[].source.fallback_poll_interval` | - | **`inbox` 専用。** fsnotify イベントを取りこぼす環境 (NFS/SMB) 向けのフォールバックポーリング間隔 (秒)。省略時は `polling_interval` を流用 |
 | `topics[].source.auth.username` | リモート時 ✓ | 接続ユーザ |
 | `topics[].source.auth.password` | - | パスワード。**`${ENV_VAR}` 参照を推奨** (YAML 平文も可)。sftp/scp で鍵がパスフレーズ付きの場合はパスフレーズとしても使われる |
 | `topics[].source.auth.key_file` | - | SSH 秘密鍵ファイルパス (sftp / scp)。**パスワードより鍵ファイルを推奨**。password / key_file のどちらかが必須 (リモート時) |
 | `topics[].subscriptions[].name` | ✓ | Subscription 名 (Topic 内で一意) |
 | `topics[].subscriptions[].directory` | ✓ | 配送先ディレクトリ (file-pubsub 稼働サーバ上のローカルパス) |
+
+### 収集モード: pull / push 受信
+
+Topic ごとに 2 つの収集モードから 1 つを選びます (後段の Archive / Fan-out / Manifest / Retry / Retention はモードに依存せず共通):
+
+- **pull 型** (`type: local | ftp | sftp | scp`): file-pubsub が `polling_interval` ごとに収集元から取りに行く (List → Fetch → Delete)。
+- **push 受信** (`type: inbox`): Producer が `directory` へ直接ファイルを put し、file-pubsub が **fsnotify イベント駆動 + 低頻度フォールバックポーリング**のハイブリッドで取り込む (共有 FS の実体 — ローカルディスク / NFS / SMB — に依存せず動作。`trigger` キーはなく常時ハイブリッド固定)。書き込み完了は `completion.mode` で検知:
+  - `stability` — サイズ・更新時刻が安定するまで待つ (既定)。
+  - `rename` — Producer が `xxx.csv.tmp` で書き込み後 `xxx.csv` へ rename する。正式名の出現で収集する (一時名は対象外)。一時拡張子は `completion.suffix` (既定 `.tmp`)。
+  - `marker` — Producer が `xxx.csv` を置いた後にマーカー `xxx.csv.done` を置く。マーカーの出現で `xxx.csv` を収集する (マーカー自体は配信せず、本体と一緒に後始末)。マーカー拡張子は `completion.suffix` (既定 `.done`)。
+
+`completion.suffix` は既存 Producer の規約 (例 `.part`, `.ok`) に合わせられるため、**Producer を改修せず**向き先を file-pubsub に変えるだけで連携を切り替えられます。
+
+```yaml
+topics:
+  - name: receipts
+    source:
+      type: inbox
+      directory: /inbox/receipts
+      completion:
+        mode: marker      # stability (既定) / rename / marker
+        suffix: .done      # marker の既定 .done。Producer の規約に合わせて変更可 (例 .ok)
+      # fallback_poll_interval: 30   # 省略時は polling_interval を流用
+    subscriptions:
+      - name: current
+        directory: /pub/receipts/current
+```
 
 ## 観測 (/metrics・/healthz)
 

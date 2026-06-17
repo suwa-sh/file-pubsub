@@ -46,7 +46,9 @@ type Options struct {
 // collect_failed としてログに記録される)。
 func New(o Options) (Connector, error) {
 	switch o.Type {
-	case "local":
+	case "local", "inbox":
+		// inbox (push 受信モード) は受信ディレクトリへのローカル FS I/O であり、List/Fetch/Remove は
+		// Local と同一。完了検知 (rename/marker) は usecase 層の責務のためコネクタは Local を再利用する。
 		return NewLocal(o.Directory), nil
 	case "ftp":
 		return NewFTP(o), nil

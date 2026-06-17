@@ -12,18 +12,35 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ソース種別 (ui-design.md: ftp / sftp / scp / local)。
+// ソース種別 (ui-design.md: ftp / sftp / scp / local / inbox)。
+// inbox は push(put)受信モード (REQ-012)。pull 型と排他で Topic ごとに選択する。
 const (
 	SourceTypeLocal = "local"
 	SourceTypeFTP   = "ftp"
 	SourceTypeSFTP  = "sftp"
 	SourceTypeSCP   = "scp"
+	SourceTypeInbox = "inbox"
 )
 
 // 元ファイルの扱い (SP-004): delete (収集して削除、デフォルト) / copy (残す)。
 const (
 	HandlingDelete = "delete"
 	HandlingCopy   = "copy"
+)
+
+// 完了検知方式 (REQ-014, SPEC-014-03)。push 受信モードで書き込み完了を判定する方式。
+// stability が既定 (pull 型と同一の安定待ち)。
+const (
+	CompletionStability = "stability"
+	CompletionRename    = "rename"
+	CompletionMarker    = "marker"
+)
+
+// rename / marker のサフィックス既定値 (SPEC-014-03)。Producer 規約に合わせ設定可能で、
+// 省略時にこの既定が適用される。
+const (
+	DefaultRenameSuffix = ".tmp"
+	DefaultMarkerSuffix = ".done"
 )
 
 // Config は単一 YAML 設定の全体を表す (E-001)。
@@ -47,13 +64,22 @@ type Topic struct {
 // Source はファイルの収集元を定義する (E-004)。
 type Source struct {
 	Type                 string         `yaml:"type"`
-	Host                 string         `yaml:"host"` // local では使わない
+	Host                 string         `yaml:"host"` // local / inbox では使わない
 	Port                 int            `yaml:"port"` // 任意。0 のときはプロトコル既定値
 	Directory            string         `yaml:"directory"`
 	OriginalFileHandling string         `yaml:"original_file_handling"` // delete (デフォルト) / copy
 	StabilityCheck       StabilityCheck `yaml:"stability_check"`
 	ExcludePatterns      []string       `yaml:"exclude_patterns"`
 	Auth                 Auth           `yaml:"auth"`
+	// 以下は push 受信モード (type=inbox) 専用 (REQ-013, REQ-014)。pull 型では使わない。
+	Completion           Completion `yaml:"completion"`             // 完了検知方式 (mode + suffix)
+	FallbackPollInterval int        `yaml:"fallback_poll_interval"` // 秒。省略時は polling_interval を流用
+}
+
+// Completion は push 受信モードの書き込み完了検知設定 (SPEC-014-03)。
+type Completion struct {
+	Mode   string `yaml:"mode"`   // stability (既定) / rename / marker
+	Suffix string `yaml:"suffix"` // rename の一時拡張子・marker のマーカー拡張子。省略時は mode 別の既定値
 }
 
 // StabilityCheck は書き込み完了 (安定) 判定の設定 (SP-003)。
@@ -132,8 +158,27 @@ func (c *Config) applyDefaults(configPath string) {
 		c.DataDir = filepath.Dir(configPath)
 	}
 	for i := range c.Topics {
-		if c.Topics[i].Source.OriginalFileHandling == "" {
-			c.Topics[i].Source.OriginalFileHandling = HandlingDelete
+		src := &c.Topics[i].Source
+		if src.OriginalFileHandling == "" {
+			src.OriginalFileHandling = HandlingDelete
+		}
+		// inbox の完了検知は既定 stability、rename/marker の suffix 省略時は方式別の既定値、
+		// フォールバック間隔は省略時 polling_interval を流用 (REQ-013, REQ-014, SPEC-014-03)。
+		if src.Type == SourceTypeInbox {
+			if src.Completion.Mode == "" {
+				src.Completion.Mode = CompletionStability
+			}
+			if src.Completion.Suffix == "" {
+				switch src.Completion.Mode {
+				case CompletionRename:
+					src.Completion.Suffix = DefaultRenameSuffix
+				case CompletionMarker:
+					src.Completion.Suffix = DefaultMarkerSuffix
+				}
+			}
+			if src.FallbackPollInterval == 0 {
+				src.FallbackPollInterval = c.PollingInterval
+			}
 		}
 	}
 }

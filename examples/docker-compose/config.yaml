@@ -72,3 +72,21 @@ topics:
         directory: /data/subscriptions/invoices/current
       - name: next
         directory: /data/subscriptions/invoices/next
+
+  # push 受信モード (inbox) の例。Producer がホストの sources/inbox/ へ直接 put し、
+  # file-pubsub が fsnotify イベント駆動 + フォールバックポーリングで取り込む。
+  # 完了検知は done マーカー方式: receipts_001.csv と receipts_001.csv.done を置くと取り込む。
+  - name: receipts
+    description: push receive (inbox) source example
+    source:
+      type: inbox
+      directory: /sources/inbox
+      completion:
+        mode: marker # stability(既定) / rename / marker
+        suffix: .done # marker の既定。Producer 規約に合わせ .ok 等へ変更可
+      # fallback_poll_interval は省略時 polling_interval を流用
+      exclude_patterns:
+        - ".*" # dotfile (.gitkeep 等) を収集しない
+    subscriptions:
+      - name: current
+        directory: /data/subscriptions/receipts/current

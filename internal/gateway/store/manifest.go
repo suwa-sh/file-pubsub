@@ -127,6 +127,19 @@ func (s *ManifestStore) Get(messageID string) (*Manifest, error) {
 	return &m, nil
 }
 
+// Exists は messageID の manifest が既に存在するかを返す。message_id の一意採番
+// (同一収集秒の衝突回避) に使う (SPEC-007-01)。
+func (s *ManifestStore) Exists(messageID string) (bool, error) {
+	_, err := os.Stat(s.path(messageID))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat manifest %s: %w", messageID, err)
+}
+
 // Put は manifest を AtomicWrite で永続化する。
 func (s *ManifestStore) Put(m *Manifest) error {
 	if m.MessageID == "" {
