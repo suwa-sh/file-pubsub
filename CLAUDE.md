@@ -24,6 +24,7 @@
 | `docs/specs/latest/` | **実装の正本**。UC 別 spec.md / tier-*.md、cross-cutting(file レイアウト・メトリクス契約・CLI 規約) |
 
 - 仕様に無いものを実装で発明しない。実装中に仕様の不足・矛盾を見つけたら、コードでごまかさず distillery の差分更新に戻す
+- spec を手動で差分編集したら、`docs/specs/events/{event_id}/` に差分イベント(変更した UC + cross-cutting + decisions + `_changes.md` + `source.txt`)を作り、`docs/specs/latest/spec-event.yaml` のヘッダ(event_id/created_at/source)を更新して `generateSpecEventMd.js` で md 再生成する。これを怠ると spec のイベントが usdm/rdra と揃わず spec-event.yaml が stale 化する(本リポジトリの spec イベントは「フルスナップショット」ではなく差分スタイルで運用)。`validateSpecEvent.js docs/specs/latest` と `validateAllYaml.js` で検証する
 
 ### 2. 実装は distillery specs に従う
 
@@ -100,6 +101,8 @@ docker compose down -v
 ## 横断的な注意点
 
 - **データ整合の原則**: 元ファイルの削除は Archive 保存 + Manifest 記録の後のみ。配信は at-least-once(クラッシュ後再開で再配置があり得る)。Archive の retention 削除は決着済み(delivered/dlq)のみ
+- **冪等系 I/O は fail-closed**: 一意採番・重複/処理済み照合(`Manifests.Exists` / `Processed.IsProcessed` 等)の I/O が失敗したら、必ず安全側に倒す — 上書きを避ける・早期取り込みを避ける(`skipProcessed`/`markerProcessed`/`uniqueMessageID` の方針)。エラーを「衝突なし/未処理」と誤って楽観視(fail-open)しない。レビューで何度も指摘される定番の落とし穴
+- **Archive 昇格/finalize 失敗時の再収集は仕様(意図的)**: `collectFile` で Promote/finalizeArchive が失敗すると原本を残し、次サイクルで再収集して重複し得る(高々 1 メッセージ。Archive は durable で損失なし)。これは at-least-once の許容範囲であってバグではない。レビュー指摘は反証してよい(`resumeArchiving` は原本後始末をしない設計)
 - **single-writer**: manifest を書くのは lock 保持者だけ(serve または replay)。status は読み取り専用
 - **CI**(`.github/workflows/ci.yml`): test(race+coverage)/ qlty / goreleaser check / docker build / compose E2E。GitHub Actions は SHA ピン + 最小 permissions を維持する
 - **リリース**: タグ `v*` push で goreleaser(Releases バイナリ)+ ghcr.io イメージ公開(`.github/workflows/release.yml`)
