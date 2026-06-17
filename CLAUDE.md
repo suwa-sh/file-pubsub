@@ -69,6 +69,18 @@ qlty fmt --all                                                        # formatte
 
 **(d) 取り込み**: **反証しきれない指摘は必ず修正する**(回帰テスト追加 → 再テスト → qlty ゲート確認)。反証内訳(指摘数 / 不採用数と根拠 / 対応数)をコミットメッセージまたは PR に残す。
 
+### 7. 完了の定義(DoD)— 「完了」と報告する前に必ず確認する
+
+`go test` が通っただけで「完了」と早期宣言しない。機能を完了と報告する前に、以下を**すべて**満たしているか確認する(満たしていない項目があれば、ユーザーの指示を待たず自分で実施する):
+
+1. **distillery 同期**: `dist-requirements` **と `dist-spec` の両方**を実施した。usdm / rdra / specs のイベントと `latest/` が同期し、`spec-event.yaml` が最新の event_id を指す(stale でない)。`validateSpecEvent.js` / `validateRequirements.js` / `validateChanges.js` が PASS
+2. **利用者向けドキュメント**: ルート `README.md` / `README.ja.md` / `examples/` を機能に合わせて更新した(docs/specs だけで満足しない)
+3. **テスト**: ATDD/TDD が GREEN、`go test ./... -race` 全 PASS、`go vet` / `gofmt` clean、`qlty check --fail-level medium` exit 0
+4. **レビュー(§6)**: サブエージェント + Codex に加え、**spec↔実装のトレーサビリティ**(BDD・ビジネスルール・設定スキーマ → 実装 + テストの 1 対 1)を確認し、指摘を反証/取り込みした
+5. **自動生成物**: `docs/README.md` を再生成した(mermaid 破損なし)
+
+このチェックリストを飛ばして「実現できました」と言わない。早期宣言は本リポジトリで繰り返した失敗(spec 同期・利用者ドキュメント・専用レビューの失念)の再発原因。
+
 ## 実装規約
 
 - **コメントは日本語**で書く(仕様の制約・設計判断を示す最小限のもの。コード・識別子・エラーメッセージ・ログは英語)
