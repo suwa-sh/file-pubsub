@@ -1,0 +1,9 @@
+spec イベント 20260620_171535_add_redundant_failover への codex 3巡目レビューの arch 側残指摘を取り込むアーキテクチャ差分更新(案Z)。
+
+設計方針(案Z): NFS 共有 FS 上で完全な分散 CAS / 分散排他は原理的に困難という前提を受け入れ、(1)実務上の原子性を message_id 単位の更新ロックで担保し、(2)残る理論限界は「既知の制約」として正直に明記する(exactly-once は約束しない。稀な競合は被害限定で吸収し、決着状態は retention 保護)。重い分散合意機構(専用ロックサービス等)は導入しない。
+
+[blocker] Manifest 世代 CAS の原子性: Manifest 更新を message_id 単位の更新ロック(manifest/{message_id}.json.lock を O_CREATE|O_EXCL で取得)で直列化する主機構を CTP-010 に追記。世代 CAS はロック下の二重チェックとして併用。NFS の原子性限界(exactly-once 非保証・被害限定)を CTP-010 description / E-011 generation / storage_mapping reason に明記。
+[major] Heartbeat の TOCTOU: lease に generation(世代カウンタ)を持たせ generation CAS で heartbeat と奪取を直列化。E-011 Lock に generation 属性を追加。
+[major整合] arch 図 ACT->STBY の 2 経路分離: system 図(diagram_mermaid)の単一ラベルを「方式B: lease 失効で standby→active」「方式A: 外部クラスタが serve リソースを起動/停止」の 2 経路に分離。
+
+CTP-010・system 図・E-011(generation 追加)の差分。CTP-006/CTR-004・data_architecture の他エンティティ・decisions・application_architecture は前イベント(20260620_213604 / 20260620_203907)を維持。RDRA の情報「Lock」「Manifest」に無い新規 RDRA 要素は発明しない(generation は情報「Lock」の属性、message_id ロックは情報「Manifest」更新の実装機構)。

@@ -1,0 +1,7 @@
+RDRA 差分 20260620_171535_add_redundant_failover および NFR 変更 20260620_194114_nfr_redundant_failover に基づくアーキテクチャ再評価。
+
+冗長構成 active/standby 自動フェイルオーバー対応(REQ-016/REQ-018, SPEC-016-01/SPEC-018-01)。
+CTP-006 を「単一インスタンス・非冗長」から「VIP + 共有 data_dir(NFSv4 推奨)の active/standby 冗長化」へ更新。
+唯一性保証は方式B(lease 自動奪取・file-pubsub 単体)+ 方式A(外部クラスタ fencing 委譲・Pacemaker/keepalived)の二方式併用・同一バイナリ。
+split-brain 被害は冪等 I/O(fail-closed)+ メッセージ境界 lease 確認 + Manifest read-merge-write で高々 1 メッセージ重複に限定(破損・喪失なし)。重い分散合意機構は導入しない。
+情報 Lock を lease レコード化(hostname/boot-id/acquired_at/renewed_at/ttl)。data_dir は共有 FS(NFSv4)前提を許容。

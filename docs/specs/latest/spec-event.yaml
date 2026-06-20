@@ -2,9 +2,9 @@
 # スキーマ: dist-spec references/spec-event-schema.md (version 1.0)
 # UC 名はディレクトリ名表記(名称中の "/" は "-" に置換)を用いる
 version: "1.0"
-event_id: "20260617_121332_harden_idempotency"
-created_at: "2026-06-17T12:13:32+09:00"
-source: "初期構築 20260612_160204 → push 受信モード追加 20260617_020637 → completion ネスト化 20260617_081425 → 冪等性ハードニング(message_id 同一秒衝突の連番回避 SPEC-007-01・marker+copy 残存マーカー SPEC-014-02)20260617_121332 (trigger: rdra 20260617_121332_harden_idempotency) の累積スナップショット"
+event_id: "20260620_171535_add_redundant_failover"
+created_at: "2026-06-20T17:15:35+09:00"
+source: "初期構築 20260612_160204 → push 受信モード追加 20260617_020637 → completion ネスト化 20260617_081425 → 冪等性ハードニング(message_id 同一秒衝突の連番回避 SPEC-007-01・marker+copy 残存マーカー SPEC-014-02)20260617_121332 → 冗長構成(active/standby 自動フェイルオーバー)対応(Lock の lease レコード化 SPEC-015-01・唯一性保証の方式A/方式B 併用 SPEC-015-02/03・split-brain 被害の高々1メッセージ重複限定 SPEC-016-01・NFS/NTP/TTL 制約 SPEC-017・単一インスタンス前提の見直し SPEC-018-01)20260620_171535 (trigger: rdra 20260620_171535_add_redundant_failover) + codex レビュー対応(案A: split-brain 重複上限 REQ-016「高々1メッセージ」をメッセージ境界 lease 確認 + Manifest read-merge-write で実装維持 spec-decision-011・方式A 起動モデルの一意化・stale lease 奪取の原子性 read→remove→O_CREATE|O_EXCL・heartbeat 自発降格境界・boot-id 用途・lock=lease 構造化スキーマ・high_availability.* キー統一と既定値/後方互換 #3-13) + codex 再レビュー対応(2巡目: 案A を read-merge-write + 世代 CAS + 競合リトライ へ精緻化 B1・decisions 役割分担 010=受動的被害限定/011=能動的上限担保 #9・方式A を standby 状態遷移から除去 #4・Heartbeat 所有者検証で旧 active の lease 奪い返し阻止・cross-cutting コンポーネント契約 ConfigLoader HighAvailability/ManifestStore PutMerged #12/#13・メッセージ境界 lease 確認の永続化点を原本 delete/MarkProcessed へ拡張・ui-design split-brain 参照 #7・冪等再開 UC で C-08 使用 #8) + codex 3巡目対応(案Z: Manifest 更新を message_id 単位の更新ロック O_CREATE|O_EXCL で直列化[主機構]・lease に generation 追加し heartbeat を generation CAS で TOCTOU 検出・NFS で完全な分散排他は不能という既知制約を spec/decision/schema に明記[exactly-once 非保証・被害限定]・方式A 起動 sequence と arch 図 ACT->STBY を方式B/方式A の 2 経路に分離・起動 UC の降格境界永続化点に原本 delete/MarkProcessed 追加・decision-011 に failed merge precedence=delivered/dlq 決着上書き不可 を定義)の累積スナップショット(spec は差分スタイル)"
 
 # UC 一覧(業務/BUC/UC の階層)— 2 業務 / 5 BUC / 19 UC
 use_cases:

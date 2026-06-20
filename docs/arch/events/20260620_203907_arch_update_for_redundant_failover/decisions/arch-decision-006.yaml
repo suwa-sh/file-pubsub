@@ -1,0 +1,37 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "architecture"
+artifact_id: "arch-decision-006"
+title: "split-brain 被害を冪等 I/O + メッセージ境界 lease 確認で高々1メッセージ重複に限定し、重い分散ロックを持たない"
+status: "approved"
+generated_at: "2026-06-20T20:39:07"
+context: |
+  active/standby の自動フェイルオーバーでは、active が 2 つ同時に存在しうる窓(split-brain)が
+  原理的に避けられない(方式B の lease 失効検知の遅延、方式A の VIP 移動と fencing のタイミング差等)。
+  この窓で 2 つの serve が同一の共有 data_dir を操作した場合に、配送データの破損・喪失や
+  大量の重複配信が起きないことを保証する必要がある(REQ-016/SPEC-016-01、NFR A.4.1.1 RPO データ損失なし維持)。
+  一方で、軽量シングルバイナリ・外部 DB なしの原則は維持したい。
+decision: |
+  split-brain でも被害をデータ喪失・破損なし、高々 1 メッセージの重複配信に限定する設計を採る。
+  (1) AtomicWrite: Subscription 配置・Manifest 更新は一時名 + rename で行い、正式名に途中状態を露出しない。
+  (2) fail-closed 冪等照合: Manifest.Exists / Processed.IsProcessed / message_id 採番の照合 I/O が失敗したら
+      安全側(衝突あり/処理済み扱い)に倒し、split-brain でも既存メッセージの上書きや二重取り込みを避ける。
+  (3) メッセージ境界での lease 確認: メッセージ単位の処理進行の境界で lease 保持を確認する。
+  (4) Manifest は read-merge-write: 配送記録を読み込んでマージして書き戻し、2 つの serve による記録の取りこぼしを防ぐ。
+  これらは既存の at-least-once 冪等再開(クラッシュ後再開で再配置があり得る)の許容範囲(高々1メッセージ重複)に
+  split-brain の被害を収めるものである。Raft/Paxos やネットワーク分散ロックといった重い合意機構は導入しない。
+consequences:
+  positive:
+    - "split-brain でもデータ喪失・破損がなく、被害が高々1メッセージの重複配信に限定される(Consumer 側の冪等取り込みで吸収可能)"
+    - "NFR A.4.1.1 RPO(データ損失なし)を冗長化後も維持できる"
+    - "重い分散ロック/合意を持たず、軽量シングルバイナリ・外部 DB なしの設計原則を維持できる"
+    - "既存の at-least-once + AtomicWrite + fail-closed 冪等の設計をそのまま活かせる"
+  negative:
+    - "重複配信を完全にゼロにはできない(at-least-once の本質。順序保証もしない)"
+    - "fail-closed のため照合 I/O 障害時は配送が一時的に保守側へ倒れる(進まないことで安全を取る)"
+    - "split-brain シナリオの検証(2 serve 同時稼働の境界)を継続的にテストする運用負担がある"
+alternatives_considered:
+  - name: "分散ロック/合意(Raft 等)で完全に唯一の writer を保証し重複をゼロにする"
+    reason_rejected: "軽量シングルバイナリ・外部 DB なしの原則に反し過剰。被害上限(高々1メッセージ重複)に対しコスト不釣り合いのため不採用"
+  - name: "フェイルオーバー時に手動で旧 active を停止確認してから昇格(自動化しない)"
+    reason_rejected: "NFR A.1.2.1/A.4.1.2(自動切替・RTO 10分以内)を満たせず、24h 運用での復旧が遅延するため不採用"

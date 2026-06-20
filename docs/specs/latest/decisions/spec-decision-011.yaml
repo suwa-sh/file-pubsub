@@ -1,0 +1,80 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-011"
+title: "split-brain の重複上限「高々1メッセージ」(REQ-016)を、message_id ロック + 世代 CAS + read-merge-write とメッセージ境界 lease 確認で実装担保する(案Z)"
+status: "approved"
+generated_at: "2026-06-20T17:15:35+09:00"
+context: |
+  spec-decision-010 は split-brain の被害を「データ破損・喪失なし」かつ「高々1メッセージの重複配信」に
+  限定する方針(AtomicWrite + at-least-once 冪等再開 + fail-closed 照合)を決めた。しかし「高々1メッセージ」
+  という上限(REQ-016)を実際に担保するには、旧 active が lease を失った後も収集→Archive→Fan-out→Manifest の
+  複数メッセージを処理し続けないこと、および 2 active が同時に Manifest を更新しても配送状態を取りこぼさない
+  ことの 2 点を、実装側の具体機構として定める必要がある。
+  論点は (1)旧 active が降格を判断する境界をどこに置くか (2)2 active 同時更新による Manifest の lost update を
+  どう避けるか であった。重い分散合意機構(分散ロックマネージャ・フェンシングトークン検証)は
+  spec-decision-009/010 の軽量維持方針と相反するため導入しない前提とする。
+  前提として、NFS 共有 FS 上で完全な分散 CAS / 分散排他を実現することは原理的に困難である(O_CREATE|O_EXCL・
+  read/write の原子性が実装・バージョン依存)。本決定はこの前提を受け入れ、(1)実務上の原子性を message_id 単位の
+  更新ロックで担保し、(2)残る理論限界は『既知の制約』として正直に明記し被害限定で吸収する方針を採る(案Z)。
+  exactly-once は約束せず、稀な競合は被害限定(破損なし・重複配信に限定)で吸収し、決着状態は retention で保護する。
+decision: |
+  REQ-016「高々1メッセージ」を、次の 2 つの軽量な実装機構で維持する(案A)。重い分散合意は導入しない
+  (spec-decision-010 の軽量維持と両立)。
+  - メッセージ境界 lease 確認: active は各メッセージ処理(収集 / Archive 保存 / Fan-out 配置 / Manifest 記録 /
+    原本 delete(source remove) / 処理済み管理への MarkProcessed)に入る前に lease 保持を再確認する(C-08 LockManager の lease 保持判定。`現在時刻 - 自身が最後に確認した
+    renewed_at <= ttl` かつ lock ファイルの hostname/boot-id が自分自身であること)。lease を失っていれば
+    「処理中のその1メッセージ」で停止して standby待機へ降格する。これにより split-brain の窓で旧 active が
+    重複させ得るのは高々1メッセージに限定される(窓の間に複数メッセージを処理し続けない)。降格境界は
+    heartbeat 更新失敗の継続検知(spec-decision-009 の heartbeat ループ)とも接続する。
+  - Manifest 更新の message_id 単位の更新ロックによる直列化(主機構): Manifest 更新を全体上書きでなく、まず
+    同一 message_id の Manifest 更新前に data_dir 上の message_id 専用ロック(manifest/{message_id}.json.lock を
+    O_CREATE|O_EXCL で取得)を取り、ロック保持下で read→merge→AtomicWrite(rename)→ロック解放 を行う。これにより
+    同一 message_id への 2 active 同時更新が直列化され lost update を防ぐ。ロックは O_CREATE|O_EXCL で取得し、
+    取得失敗(他者保持)時はリトライ/バックオフ、上限超過は fail-closed(配信保留・上書き回避)に倒す。
+    プロセス異常終了で残ったロックは次回更新時の有限リトライ/バックオフで吸収する(stale 相当として安全に再取得)。
+    Manifest は message_id 別ファイルのため競合し得るのは同一 message_id の更新のみ。
+  - Manifest の read-merge-write + 世代 CAS + 競合リトライ(ロック下の二重チェック): ロック保持下で read-merge-write を
+    行う。対象 message_id の Manifest を読込み(read)、Subscription 別配送状態(delivered / failed / dlq)を自分の更新内容と
+    マージ(merge)し、一時名 → rename で書く(write)。さらに rename 直前に対象 Manifest の世代(mtime または Manifest
+    レコードに持つ revision)を再確認する「世代 CAS」をロック下の二重チェックとして併用する: read 時に観測した世代を覚えておき、
+    rename の直前に現在の世代を読み直して一致する場合のみ rename を実行する。不一致(NFS でロックの原子性が破れて他 active が
+    更新した等)なら自分の一時ファイルを破棄して Manifest を再読込し、マージし直して再試行する(競合リトライ。指数バックオフ等で
+    有限回試行)。これにより message_id ロックが破れた稀なケースでも、先に記録された delivered/dlq の決着状態を取りこぼさない
+    (lost update 回避)。決着状態(delivered/dlq)は retention で保護され、後勝ち上書きで未配信へ戻らない。
+    既知の制約: NFS では O_CREATE|O_EXCL・read/write の原子性が実装・バージョン依存であり、message_id ロック + 世代 CAS でも
+    完全な分散排他は保証できない。本機構は『実務上の原子性 + 被害限定』であり exactly-once は保証しない。稀に競合が破れても
+    AtomicWrite で破損はせず、被害は重複配信に留まり決着状態は retention で保護される。重い分散合意は導入しない。
+  これらの機構は spec-decision-010 の「被害限定」を上限「高々1メッセージ」として実装上担保する層であり、
+  方式A(外部クラスタ委譲)・方式B(lease 自動奪取)の双方で同じく機能する。
+  - merge precedence(マージ時の状態優先順位): read-merge-write のマージ対象は Subscription 別配送状態(delivered / failed / dlq)で
+    あり、決着状態(delivered / dlq)は保持・上書き不可、中間状態(failed)は再配信成功時に delivered へ上書き可、とする。
+    すなわち自分の更新が delivered/dlq なら書き、read した既存が既に delivered/dlq の Subscription はその決着状態を保持し
+    自分の中間状態(failed 等)で上書きしない。これにより 2 active が相前後して更新しても決着状態が未配信(failed)へ後退しない。
+    保護対象の決着状態は delivered / dlq であり、merge 対象に含まれる failed は中間状態として再配信で delivered へ進める
+    (spec-decision-010 の被害限定とこの precedence は整合する)。
+  なお spec-decision-010 は「受動的被害限定」(クラッシュ後の AtomicWrite + at-least-once 冪等再開 + fail-closed 照合
+  でデータ破損・喪失を起こさない受け身の安全網)を担い、本決定 spec-decision-011 は「能動的上限担保」
+  (メッセージ境界 lease 確認 + Manifest read-merge-write + 世代 CAS で重複の上限を能動的に高々1メッセージへ抑える)
+  を担う。両者は独立した層で、010 の「高々1メッセージ」主張は 011 の能動機構に依存する。
+consequences:
+  positive:
+    - "split-brain の窓で旧 active が処理を続けても重複は高々1メッセージに収まり、REQ-016 の上限を実装で担保できる"
+    - "Manifest 更新を message_id 単位の更新ロック(O_CREATE|O_EXCL)で直列化し、ロック下の read-merge-write + 世代 CAS で 2 active 同時更新でも delivered/dlq の決着状態を取りこぼさない(lost update 回避)。ロックが破れた稀なケースも世代 CAS で塞ぐ"
+    - "重い分散合意機構(専用ロックサービス等)を持たず、message_id ロックと Manifest 再読込 + 世代 CAS という軽量機構のみで実務上の原子性を担保でき spec-decision-009/010 の軽量方針と両立する"
+    - "010(受動的被害限定)と 011(能動的上限担保)で役割が分かれ、被害なし(010)と上限維持(011)を独立した層として説明・検証できる"
+  negative:
+    - "各メッセージ処理前の lease 保持再確認と Manifest 更新前の message_id ロック取得 + 再読込 + rename 直前の世代再確認で、メッセージあたりの I/O が増える(NFS 上の小さなロック操作・読み)。競合時はリトライ分の再取得・再読込も加わる"
+    - "lease 保持確認・ロック取得の I/O が失敗した場合は fail-closed で降格・配信保留(処理を止め他ノードの昇格を妨げない)に倒すため、誤検知での降格・処理遅延が起こりうる(安全側の代償)"
+    - "**既知の制約(理論限界を正直に明記)**: NFS では O_CREATE|O_EXCL・read/write の原子性が実装・バージョン依存であり、message_id ロック + lease generation CAS でも完全な分散排他・分散 CAS は原理的に保証できない。本機構は『実務上の原子性 + 被害限定』であり exactly-once は保証しない。稀に競合が破れても AtomicWrite で破損はせず、決着状態(delivered/dlq)は retention で保護され、被害は高々1メッセージの重複配信に留まる"
+alternatives_considered:
+  - name: "サイクル境界(1 ポーリングサイクル全体)でのみ lease を確認する"
+    reason_rejected: "1 サイクルで複数メッセージを処理するため、split-brain の窓でサイクル内の複数メッセージが重複し得る。REQ-016『高々1メッセージ』の上限を担保できないため不採用。確認はメッセージ境界に置く"
+  - name: "Manifest を全体上書き(read せず write)する"
+    reason_rejected: "2 active が同一 message_id の Manifest を相前後して書くと、後勝ちで先の delivered/dlq 記録を失う lost update が起き、決着済みメッセージが未配信へ戻り重複が高々1メッセージを超え得る。read-merge-write + 世代 CAS で回避するため不採用"
+  - name: "read-merge-write のみ(世代 CAS・message_id ロックなし)で済ませる"
+    reason_rejected: "read と rename の間に他 active が決着状態を書く窓が残り、マージ元が古いまま rename して lost update が起きうる。message_id 単位の更新ロックで直列化し、ロック下で rename 直前に世代(mtime/revision)を再確認する CAS を二重チェックとして併用する。重い分散合意は不要で軽量に塞げるため両者を採用する"
+  - name: "message_id ロックなしで世代 CAS のみに頼る"
+    reason_rejected: "世代 CAS は read→rename 間の窓を検出してリトライできるが、競合が頻発するとリトライが増え、NFS では世代観測(mtime/revision read)自体の原子性も実装依存で取りこぼしが残りうる。同一 message_id への更新をまず O_CREATE|O_EXCL の更新ロックで直列化(主機構)し、世代 CAS をロック下の二重チェックに回すことで、実務上の原子性を担保しつつ NFS の限界はロック破れ時の被害限定で吸収する(案Z)。両者の併用を採用する"
+  - name: "分散ロックマネージャ/フェンシングトークン検証を本体に持たせて split-brain の窓を排除する"
+    reason_rejected: "spec-decision-010 同様、NFS 共有 + 軽量シングルバイナリの前提に過剰で方式A と責務が重複する。メッセージ境界 lease 確認 + read-merge-write で上限を担保でき軽量に保てるため不採用"

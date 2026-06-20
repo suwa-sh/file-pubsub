@@ -1,7 +1,7 @@
 version: "1.0"
-event_id: "20260612_153353_nfr_initial_build"
-created_at: "2026-06-12T15:33:53"
-source: "初期構築 (trigger_event rdra:20260612_150425_initial_build)"
+event_id: "20260620_194114_nfr_redundant_failover"
+created_at: "2026-06-20T19:41:14"
+source: "差分更新: 冗長構成(active/standby 自動フェイルオーバー)対応に伴う可用性メトリクス再評価 (trigger_event rdra:20260620_171535_add_redundant_failover, REQ-018/SPEC-018-01)"
 
 model_system:
   type: "model1"
@@ -47,10 +47,11 @@ categories:
               - id: "A.1.2.1"
                 name: "サービス切替時間"
                 important: true
-                grade: 1
-                grade_description: "24時間未満（部品交換による復旧）"
-                reason: "モデルシステム1のデフォルト値を適用（単一インスタンス・HA なしのため切替先を持たない）"
-                confidence: "default"
+                grade: 4
+                grade_description: "10分未満（ホットスタンバイ）= active/standby 自動フェイルオーバー（lease 失効検知〜standby 昇格）"
+                reason: "active/standby + 自動フェイルオーバーにより、lease 失効(renewed_at + ttl 超過)検知から standby 昇格までで切替が完了する。lease TTL は NFS 属性キャッシュ(actimeo 既定60s)より十分大きく取るため切替は分オーダー(10分未満)"
+                source_model: "UC: デーモンを起動する(active昇格/standby待機) / 状態: デーモン稼働状態(standby待機→稼働中) / 条件: 二重起動防止(lease レコード化)"
+                confidence: "medium"
       - id: "A.2"
         name: "耐障害性"
         items:
@@ -61,10 +62,10 @@ categories:
               - id: "A.2.1.1"
                 name: "サーバ内の冗長化"
                 important: true
-                grade: 1
-                grade_description: "冗長化なし（再起動で復旧）"
-                reason: "ユーザー指定: 単一インスタンス前提・HA はスコープ外、再起動後は冪等に処理を再開する設計判断"
-                source_model: "UC: 冪等に処理を再開する / 条件: 二重起動防止"
+                grade: 4
+                grade_description: "完全冗長化（自動切替）= VIP + NFS 共有 data_dir 上の active/standby 自動フェイルオーバー（single-writer 維持）"
+                reason: "ユーザー指定(REQ-018/SPEC-018-01): 単一インスタンス前提(HAなし)を改め、VIP + NFS 共有 data_dir による active/standby 冗長化 + 自動フェイルオーバーへ引き上げる。唯一性保証は方式B(lease 自動奪取)+ 方式A(外部クラスタ fencing 委譲)の併用で single-writer(serve は常に1つ)を維持する"
+                source_model: "条件: 二重起動防止(lease レコード化・single-writer) / バリエーション: 唯一性保証方式(方式A/方式B) / 外部システム: 外部クラスタ / 状態: デーモン稼働状態(standby待機・昇格/降格)"
                 confidence: "user"
           - id: "A.2.2"
             name: "端末"
@@ -168,18 +169,19 @@ categories:
               - id: "A.4.1.2"
                 name: "RTO（目標復旧時間）"
                 important: true
-                grade: 2
-                grade_description: "半日以内（数時間以内を目標）"
-                reason: "ユーザー指定: 兼務運用で再起動 + Replay による追いつき配信により数時間以内に復旧"
-                source_model: "UC: 冪等に処理を再開する / UC: 再送(Replay)を実行する"
-                confidence: "user"
+                grade: 4
+                grade_description: "10分以内（lease 失効検知〜standby 自動昇格による配信継続）"
+                reason: "自動フェイルオーバーにより RTO の主要因が lease 失効検知〜standby 昇格の時間になる。再起動 + Replay の手動復旧(数時間)に依存せず分オーダーで配信を再開できるため 10分以内へ引き上げる(切替時間 A.1.2.1 と整合)"
+                source_model: "UC: 冪等に処理を再開する(standby→active 昇格) / 状態: デーモン稼働状態(standby待機→稼働中)"
+                confidence: "medium"
               - id: "A.4.1.3"
                 name: "RLO（目標復旧レベル）"
                 important: false
-                grade: 1
-                grade_description: "縮退運転（主要機能のみ）"
-                reason: "モデルシステム1のデフォルト値を適用"
-                confidence: "default"
+                grade: 3
+                grade_description: "平常時と同等（standby は同一 data_dir・同一設定で昇格するため全機能を継続）"
+                reason: "standby は VIP + NFS 共有 data_dir 上で active と同一設定により昇格するため、フェイルオーバー後も平常時と同等の処理能力・機能で復旧する(縮退運転を前提としない)"
+                source_model: "UC: 冪等に処理を再開する / 外部システム: 外部クラスタ(VIP と serve を同一リソースグループで束ねる)"
+                confidence: "medium"
   - id: "B"
     name: "性能・拡張性"
     subcategories:
@@ -502,9 +504,9 @@ categories:
                 name: "障害復旧方式"
                 important: false
                 grade: 1
-                grade_description: "デーモン再起動 + Archive からの再送(Replay)による復旧"
-                reason: "ユーザー指定: 再起動 + Replay で追いつき復旧（RTO 数時間以内と整合）"
-                source_model: "UC: 冪等に処理を再開する / UC: 再送(Replay)を実行する"
+                grade_description: "active/standby 自動フェイルオーバー（standby 自動昇格）による配信継続。split-brain の窓でも被害は高々1メッセージの重複配信に限定（破損・喪失なし）"
+                reason: "ユーザー指定(REQ-016/SPEC-016-01): 障害復旧は standby の自動昇格による配信継続を主とし、再起動 + Replay は補完手段。split-brain の窓でも AtomicWrite + at-least-once 冪等再開 + fail-closed 冪等照合により被害を高々1メッセージの重複配信に限定(exactly-once は保証しない)"
+                source_model: "UC: 冪等に処理を再開する / 条件: 二重配信防止(Manifest 照合 fail-closed) / 条件: AtomicWrite配置"
                 confidence: "user"
       - id: "C.4"
         name: "運用環境"

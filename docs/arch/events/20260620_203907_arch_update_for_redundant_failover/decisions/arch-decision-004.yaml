@@ -1,0 +1,29 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "architecture"
+artifact_id: "arch-decision-004"
+title: "観測戦略: Prometheus pull 型(/metrics + /healthz)、しきい値判定は外部監視基盤の責務"
+status: "approved"
+generated_at: "2026-06-12T15:48:33"
+context: |
+  NFR で 24 時間自動監視(C.1.1.1 Lv5)と Topic 別のアプリケーション監視(C.1.3.1 Lv3)が要求される一方、
+  人対応は営業時間内・兼務(C.5.1.1 Lv1)であり、本体に高度な通知機構を持たせる理由は薄い。
+  導入先には Prometheus / Grafana 等の外部監視基盤(RDRA 外部システム: 監視基盤)が存在する前提。
+decision: |
+  デーモンが死活監視用の /healthz と Prometheus 形式の /metrics(Topic 別の最終収集時刻・処理件数・
+  配信失敗数・DLQ 件数・滞留数)を HTTP で公開し、外部監視基盤が pull するエージェントレス外形監視とする。
+  しきい値判定・アラート発報は外部監視基盤の責務とし、本体はメトリクスの正確な公開に専念する。
+  メトリクスはインメモリ集計で永続化しない(時系列の蓄積は監視基盤側が担う)。
+consequences:
+  positive:
+    - "Prometheus エコシステム(Grafana・Alertmanager)をそのまま使え、監視基盤の重複実装を避けられる"
+    - "pull 型のため本体は通知先設定・再送制御を持たず、設定が単純になる"
+    - "Topic 別メトリクスで滞留・配信失敗・DLQ 増加の異常検知が可能(アプリケーション監視 Lv3 を充足)"
+  negative:
+    - "監視基盤が未整備の導入先ではアラートが機能しない(死活・異常検知は導入先の監視基盤整備が前提)"
+    - "メトリクスはインメモリのためデーモン再起動でリセットされる(累積値の連続性は監視基盤側の蓄積に依存)"
+alternatives_considered:
+  - name: "push 型メトリクス送信(Pushgateway / 独自送信)"
+    reason_rejected: "送信先設定・失敗時の再送制御が本体に必要になり設定が複雑化する。常駐デーモンは scrape 対象にできるため pull で十分であり不採用"
+  - name: "内蔵アラート(メール / Webhook 通知)"
+    reason_rejected: "しきい値管理・通知チャネル管理は外部監視基盤と重複実装になる。運用基盤の責務分担(判定は監視基盤)を崩すため不採用"

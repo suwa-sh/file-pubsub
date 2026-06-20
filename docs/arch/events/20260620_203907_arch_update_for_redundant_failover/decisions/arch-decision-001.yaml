@@ -1,0 +1,31 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "architecture"
+artifact_id: "arch-decision-001"
+title: "ストレージ戦略: 外部 DB を使わずローカルファイルシステムのみ(Manifest=JSON)"
+status: "approved"
+generated_at: "2026-06-12T15:48:33"
+context: |
+  file-pubsub はレガシー現場のオンプレ単一サーバへ追加ランタイムなしで導入する軽量ブリッジであり、
+  配送状態(Manifest)・DLQ・処理済み管理・Lock などの永続データを持つ必要がある。
+  導入障壁の最小化(シングルバイナリで完結)と、運用者がツールなしで中身を確認できる透明性が求められる。
+  処理量は数千ファイル/日・〜50 topic 規模で、トランザクション競合は単一インスタンス前提のため発生しない。
+decision: |
+  外部 DB を使わず、すべての永続データをローカルファイルシステムに置く。
+  Manifest はメッセージ別 JSON ファイル(配送イベント追記 + Subscription 別現在状態)とし、
+  archive/ subscriptions/ dlq/ processed/ lock などのディレクトリ・ファイル構造で表現する。
+  書き込みは AtomicWrite(.tmp→rename)で破損を防ぎ、再起動時は Manifest 参照の冪等再開で整合を保つ。
+  レガシー現場への導入障壁最小化とシングルバイナリ完結が決め手。
+consequences:
+  positive:
+    - "追加ミドルウェア不要でシングルバイナリ配布が完結する(導入障壁最小)"
+    - "Manifest が JSON のため運用者が cat / jq 等の標準ツールで直接確認でき、障害調査を単独で完結できる"
+    - "Archive・Subscription 配置と同じファイルシステム上で完結し、バックアップ・復旧の考え方が単純になる"
+  negative:
+    - "横断検索・集計(期間指定の status 等)はファイル走査になり、大量メッセージ時は遅くなりうる(retention 90 日目安で抑制)"
+    - "トランザクション機能がないため、AtomicWrite と冪等再開の規約をアプリ側で厳守する必要がある"
+alternatives_considered:
+  - name: "SQLite"
+    reason_rejected: "導入は容易だが CGO 依存・DB ファイル破損リスクがあり、運用者が標準ツールで中身を確認できる透明性でファイル + JSON に劣るため不採用"
+  - name: "RDB(PostgreSQL 等)"
+    reason_rejected: "外部ミドルウェアの導入・運用が必要になりレガシー現場への導入障壁が大きい。数千ファイル/日・単一インスタンスの規模に対して過剰なため不採用"

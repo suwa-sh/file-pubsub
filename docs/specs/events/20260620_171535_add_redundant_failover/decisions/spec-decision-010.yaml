@@ -1,0 +1,49 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-010"
+title: "lease 方式の split-brain 被害を、既存の冪等 I/O(AtomicWrite + at-least-once 冪等再開 + fail-closed 照合)で受動的に限定する(被害なし=破損・喪失なし。上限「高々1メッセージ」の能動担保は spec-decision-011)"
+status: "approved"
+generated_at: "2026-06-20T17:15:35+09:00"
+context: |
+  方式B(lease 自動奪取、spec-decision-009)では、旧 active の lease 失効判定と新 active の昇格の間に、
+  旧 active がまだ data_dir を操作している split-brain の窓が原理的に残る(NFS 断・heartbeat 遅延・
+  時刻ずれ等で発生しうる)。この窓を運用上許容するには、被害がデータ破損・喪失に至らず、既存の
+  at-least-once 許容範囲(高々1メッセージの重複配信)に収まることを保証する必要がある(REQ-016)。
+  論点は、split-brain の窓そのものを排除する追加機構(分散ロックマネージャ・フェンシングトークン検証等)
+  を file-pubsub 本体に持たせるか、既存の冪等 I/O 設計で被害限定に留めるか、であった。
+decision: |
+  split-brain の窓そのものを本体で排除する追加機構は持たず、既存の冪等 I/O 設計で「被害限定」に倒す。
+  2つの serve が一時的に同じ data_dir を操作しても、以下により被害を高々1メッセージの重複配信に限定し、
+  データ破損・喪失は起こさない(SPEC-016-01):
+  - AtomicWrite 配置(一時名 → rename): Subscription 配置先の正式名ファイルは常に完全な内容で、
+    途中状態は露出しない。2つの serve が同一 Subscription へ書いても rename の後勝ちで完全なファイルが
+    残り、破損しない(条件「AtomicWrite配置」)。
+  - at-least-once 冪等再開(resumeArchiving): 一方が中断・再開しても、Manifest の配送状態から未配信
+    Subscription のみを配置するため喪失は起きない。重複は高々1メッセージに留まる(UC「冪等に処理を
+    再開する」)。
+  - 冪等照合の fail-closed: Manifest.Exists / Processed.IsProcessed 等の照合 I/O が失敗したら安全側に
+    倒す(衝突なし/未処理と誤って楽観視しない)。既存メッセージの上書き・重複した早期取り込みを避ける
+    (条件「二重配信防止」「message_id採番」)。
+  これは唯一性保証の二方式(spec-decision-009)とは独立した「被害限定」の層であり、方式A(外部クラスタ
+  委譲)でも保険として機能する。split-brain の窓は外部クラスタの fencing(方式A)または lease の TTL を
+  actimeo より十分大きく取る運用(方式B、SPEC-017-01)で実務的に縮小する。
+  役割分担: 本決定 spec-decision-010 は「受動的被害限定」を担う — クラッシュ後再開で 2 active が共存しても、
+  AtomicWrite(完全配置)+ at-least-once 冪等再開 + fail-closed 照合という受け身の安全網で、データ破損・喪失を
+  起こさない。一方「高々1メッセージ」という重複の上限そのものは、本決定単独では担保できない(受動安全網だけでは
+  旧 active が複数メッセージを処理し続ける/2 active 同時更新で決着状態を取りこぼす余地が残る)。上限の能動的担保は
+  spec-decision-011(メッセージ境界 lease 確認 + Manifest read-merge-write + 世代 CAS)が担う。したがって本決定の
+  「被害を高々1メッセージの重複配信に限定する」主張は、spec-decision-011 の能動機構に依存して成立する。
+consequences:
+  positive:
+    - "split-brain の窓を本体に重い分散合意機構を持たずに運用許容でき、実装・運用を単純に保てる"
+    - "被害がデータ破損・喪失に至らず高々1メッセージの重複配信(既存 at-least-once 許容範囲)に収まる"
+    - "方式A/方式B の双方で同じ冪等 I/O が保険として働き、フェイルオーバー設計の前提を揃えられる"
+  negative:
+    - "split-brain の窓では高々1メッセージの重複配信が起こりうる(exactly-once は保証しない。既存方針の継続)"
+    - "被害限定は冪等照合 I/O の fail-closed に依存するため、照合 I/O 失敗時は配信保留・再収集回避により処理が遅延しうる(安全側の代償)"
+alternatives_considered:
+  - name: "分散ロックマネージャ/フェンシングトークン検証を file-pubsub 本体に持たせて split-brain を排除する"
+    reason_rejected: "NFS 共有 + 軽量シングルバイナリという本プロダクトの前提に対して過剰。外部依存(専用ロックサービス)や重い分散合意を持ち込むことになり、方式A(外部クラスタ委譲)とも責務が重複する。被害限定で at-least-once 許容範囲に収まるため不採用"
+  - name: "split-brain 検知時に処理を全停止(fail-stop)する"
+    reason_rejected: "可用性を上げるための冗長化(REQ-015)の目的に反する。誤検知での全停止リスクもあり、被害限定(高々1メッセージ重複)で運用継続する方が目的に合致するため不採用"

@@ -1,0 +1,85 @@
+meta:
+  event_id: "20260620_222215_arch_refine_failover_atomicity"
+  trigger_event: "spec:20260620_171535_add_redundant_failover (codex 3巡目レビュー)"
+  created_at: "2026-06-20T22:22:15"
+
+# codex 3巡目レビュー(案Z)の arch 差分。
+# - CTP-010 split-brain 被害限定: Manifest 更新を message_id 単位の更新ロック(O_CREATE|O_EXCL)で直列化する主機構と、
+#   lease の generation CAS による heartbeat TOCTOU 検出、NFS で完全な分散排他は不能という既知制約(exactly-once 非保証)を追記。
+# - E-011 Lock: lease に generation(世代カウンタ)属性を追加。heartbeat の generation CAS / 奪取の世代前進に用いる。
+# - system 図(diagram_mermaid): ACT->STBY の単一ラベルを「方式B: lease 失効で standby→active」「方式A: 外部クラスタが
+#   serve リソースを起動/停止」の 2 経路に分離。
+# 差分対象のみ記載(他は latest を維持)。CTP-006/CTR-004・data_architecture の他エンティティ・decisions は前イベントを維持。
+
+technology_context:
+  cross_cutting_patterns:
+    - id: "CTP-010"
+      name: "split-brain 被害の限定(冪等 I/O + メッセージ境界 lease 確認 + message_id ロック直列化)"
+      description: "自動フェイルオーバー時に active が 2 つ存在しうる窓(split-brain)でも被害をデータ喪失・破損なし・高々 1 メッセージの重複配信に限定する。(1) Subscription 配置・Manifest 更新は AtomicWrite(一時名 + rename)で正式名に途中状態を露出しない、(2) 冪等照合 I/O(Manifest.Exists / Processed.IsProcessed / message_id 採番)は fail-closed で安全側に倒す、(3) メッセージ境界(収集 / Archive 保存 / Fan-out 配置 / Manifest 記録 / 原本 delete / 処理済み MarkProcessed の前)で lease 保持を確認し旧 active を高々1メッセージで停止、(4) Manifest 更新は message_id 単位の更新ロック(manifest/{message_id}.json.lock を O_CREATE|O_EXCL で取得)で直列化し、ロック下の read-merge-write + 世代 CAS(merge precedence: delivered/dlq は決着で上書き不可・failed は delivered へ昇格可)で配送記録の取りこぼしを防ぐ、(5) lease の heartbeat は所有者検証 + generation CAS で旧 active の lease 奪い返し TOCTOU を検出する。これにより split-brain でも at-least-once 冪等再開の許容範囲(高々 1 メッセージ重複)に被害を収める。重い分散ロック/合意は導入しない。**既知の制約**: NFS 共有 FS では O_CREATE|O_EXCL・read/write の原子性が実装・バージョン依存で、完全な分散 CAS / 分散排他は原理的に保証できない。本方針は実務上の原子性(message_id ロック + generation CAS)+ 被害限定(破損なし・決着状態は retention 保護・被害は重複配信に限定)であり exactly-once は保証しない(spec-decision-009/010/011)"
+      reason: "ユーザー指定(REQ-016/SPEC-016-01、案Z): split-brain 被害を高々 1 メッセージ重複に限定。NFS で完全な分散 CAS が困難という前提を受け入れ、実務上の原子性(message_id ロック直列化 + lease generation CAS)で担保し残る理論限界は被害限定 + 既知制約明記で吸収する。NFR A.4.1.1 RPO(Lv4 データ損失なし)維持・C.3.3.1 障害復旧方式(standby 自動昇格で配信継続)への対応"
+      source_model: "条件: 二重配信防止 / 条件: AtomicWrite配置 / 条件: message_id採番 / 情報: Manifest / 情報: 処理済み管理 / 情報: Lock / NFR A.4.1.1, NFR C.3.3.1"
+      confidence: "user"
+  diagram_mermaid: |
+    graph TD
+      PROD["Producerシステム(無改修)"] -->|"ファイル出力"| REMOTE["リモートファイル領域(FTP/SFTP/SCP)"]
+      VIP["VIP(active/standby)"] --> ACT["serve active (lease保持)"]
+      STBY["serve standby (待機・方式B)"] -.->|"方式B: lease失効(renewed_at+ttl超過)を検知し奪取して昇格"| ACT
+      CLUSTER["外部クラスタ(Pacemaker/keepalived・方式A)"] -.->|"方式A: serveリソースを起動/停止(fencing・VIP+serveを同一リソースグループ)"| ACT
+      CLUSTER -.->|"fencing・VIP制御"| VIP
+      REMOTE -->|"Collect(lease保持者のみpull・安定待ち)"| ACT
+      ACT -->|"配信前に必ず保存"| ARCH[("共有 data_dir(NFSv4): archive/{topic}/")]
+      ARCH -->|"Fan-out(AtomicWrite)"| SUBS[("subscriptions/{current,next,test}/")]
+      SUBS -->|"従来手段でGET"| CCUR["Consumerシステム(Current)"]
+      SUBS -->|"従来手段でGET"| CNXT["Consumerシステム(Next)"]
+      ACT -->|"配送記録(message_idロック+read-merge-write)"| MAN[("Manifest/DLQ/Lock(lease)/処理済み管理")]
+      ACT -->|"/metrics・/healthz"| MON["監視基盤(Prometheus/Grafana等)"]
+      CLI["tier-ops-cli 運用 CLI(serve/status/replay/設定検証)"] -->|"照会(読み取り専用)"| MAN
+      CLI -->|"Replay読出"| ARCH
+      OPS["配信基盤運用者"] --> CLI
+
+data_architecture:
+  entities:
+    - id: "E-011"
+      name: "Lock"
+      source_info: "情報: Lock"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "hostname"
+          type: "string"
+          description: "lease 保持ノードのホスト名(マルチホスト識別)。旧スキーマの lock_holder_process_info(PID 文字列)は lease レコード化に伴い廃止し、所有者は hostname + boot_id で識別する。単一インスタンス運用(high_availability 省略)では lock ファイルの存在で二重起動を防ぐ(PID フィールドは持たない)"
+          nullable: false
+          primary_key: false
+        - name: "boot_id"
+          type: "string"
+          description: "起動世代識別子(boot-id)。同一ホストの再起動を区別する"
+          nullable: false
+          primary_key: false
+        - name: "acquired_at"
+          type: "datetime"
+          description: "lease 取得日時"
+          nullable: false
+          primary_key: false
+        - name: "renewed_at"
+          type: "datetime"
+          description: "lease 更新日時。active が heartbeat で更新する。stale 判定(renewed_at + ttl 超過)の基準。heartbeat は所有者検証 + generation CAS(hostname/boot_id が自分自身 かつ generation が自分の最終書込値と一致する場合のみ更新)で旧 active の lease 奪い返し TOCTOU を防ぐ"
+          nullable: false
+          primary_key: false
+        - name: "ttl"
+          type: "integer"
+          description: "lease 有効期間(秒)。renewed_at + ttl 超過で stale と判定し standby が奪取できる"
+          nullable: false
+          primary_key: false
+        - name: "generation"
+          type: "integer"
+          description: "lease 世代カウンタ。取得・奪取のたびに +1 し、奪取側は観測した generation を進める。heartbeat 更新は generation CAS(read した generation が自分の最終書込値と一致する場合のみ更新)で直列化し、旧 active が新 active の lease を check→update の隙に上書きで奪い返す TOCTOU を generation 不一致で検出する(spec-decision-009)。NFS の原子性は実装依存のため完全な分散排他は保証せず exactly-once は約束しない(既知の制約)"
+          nullable: false
+          primary_key: false
+      relationships:
+        - target_entity: "E-001"
+          type: "N:1"
+          description: "Lock(lease)の TTL・heartbeat・唯一性保証方式は設定の high_availability で規定される"
+  storage_mapping:
+    - entity_id: "E-011"
+      storage_type: "file"
+      reason: "共有 data_dir(NFSv4 推奨)上の lease ファイル(hostname/boot-id/acquired_at/renewed_at/ttl/generation)。renewed_at + ttl 超過で stale 判定し active/standby の single-writer を維持する。PID 生存確認に依存せずマルチホストで判定できる。heartbeat は所有者検証 + generation CAS で TOCTOU を検出する。NFS では原子性が実装依存で完全な分散排他は保証できず exactly-once は約束しない(既知の制約、spec-decision-009/011)"
+      confidence: "user"
