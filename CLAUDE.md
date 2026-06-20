@@ -26,7 +26,19 @@
 - 仕様に無いものを実装で発明しない。実装中に仕様の不足・矛盾を見つけたら、コードでごまかさず distillery の差分更新に戻す
 - spec を手動で差分編集したら、`docs/specs/events/{event_id}/` に差分イベント(変更した UC + cross-cutting + decisions + `_changes.md` + `source.txt`)を作り、`docs/specs/latest/spec-event.yaml` のヘッダ(event_id/created_at/source)を更新して `generateSpecEventMd.js` で md 再生成する。これを怠ると spec のイベントが usdm/rdra と揃わず spec-event.yaml が stale 化する(本リポジトリの spec イベントは「フルスナップショット」ではなく差分スタイルで運用)。`validateSpecEvent.js docs/specs/latest` と `validateAllYaml.js` で検証する
 
-### 2. 実装は distillery specs に従う
+### 2. 仕様確定後・実装前のレビューゲート(codex)
+
+distillery で spec(`docs/specs/latest/`)が固まったら、**実装に入る前に** codex で外部レビューを通す。これは実装後の §7 レビューとは別で、「仕様そのものの妥当性」を実装着手前に検証する**実装前ゲート**。コードを書き始めてから仕様の欠陥に気づく手戻りを防ぐのが目的。
+
+**(a) codex レビュー**: 確定した spec 一式(該当 UC の spec.md / tier-*.md、`_cross-cutting/`、関連する usdm / rdra / arch / nfr の差分)を対象に `codex:rescue` で外部レビューを実施する(「レポートだけ、修正不要」と明示)。観点: 要件網羅 / 仕様内部の矛盾・抜け漏れ / 既存仕様との不整合 / 実現可能性とリスク / データ整合・冪等性・クラッシュ耐性の設計妥当性。
+
+**(b) 反証**: 指摘ごとに spec・既存実装・要件と照合して反証を試みる。誤検出・意図した設計判断・スコープ外は根拠つきで不採用にする。
+
+**(c) 対応**: 反証しきれない指摘は **distillery の差分更新に戻して spec を修正**する(コードで先回りして辻褄を合わせない)。spec を直したら §1 のイベント追記・`validateSpecEvent.js` / `validateAllYaml.js` 再検証まで行う。
+
+**(d) 実装着手**: 上記の レビュー → 反証 → 対応 が済み spec が安定してから §3 以降(実装)に入る。反証内訳(指摘数 / 不採用と根拠 / 対応)は spec イベントの `_changes.md` か PR に残す。
+
+### 3. 実装は distillery specs に従う
 
 - `docs/specs/latest/` の該当 UC の spec.md / tier-*.md を読んでから着手する
 - レイヤー構成と依存ルールは `docs/arch/latest/arch-design.yaml` に従う:
@@ -34,19 +46,19 @@
 - ファイルレイアウト・Manifest スキーマは `docs/specs/latest/_cross-cutting/datastore/object-storage-schema.yaml` が正本
 - CLI 出力・終了コード(0/1/2/3)・構造化ログのフィールドは `_cross-cutting/ux-ui/ui-design.md` が正本
 
-### 3. ATDD: specs の受け入れ条件を先にテスト化する
+### 4. ATDD: specs の受け入れ条件を先にテスト化する
 
 - 各 UC spec.md の **BDD シナリオ(Given/When/Then)を受け入れテストとして先に書く**(`internal/e2e/` または該当パッケージのテスト)
 - 受け入れテストが RED であることを確認してから実装に入る
 - シナリオの具体値(topic=orders、message_id 形式等)は spec の記述をそのまま使う
 
-### 4. TDD: ユニットレベルも specs を起点に RED → GREEN → REFACTOR
+### 5. TDD: ユニットレベルも specs を起点に RED → GREEN → REFACTOR
 
 - domain のルール(状態遷移・採番・安定判定・冪等判定)は spec のトレーサビリティ表にある条件・状態遷移を 1 ケースずつテスト化してから実装する
 - store/gateway は `t.TempDir()` でファイル実体を使ってテストする(モックで誤魔化さない)
 - バグ修正は必ず再現テストを先に書く
 
-### 5. qlty check 指摘ゼロをキープ
+### 6. qlty check 指摘ゼロをキープ
 
 - 変更のたびにローカルで実行する:
 
@@ -59,7 +71,7 @@ qlty fmt --all                                                        # formatte
 - radarlint のコードスメル(low に triage 済み)は助言。新規コードでは複雑度 15 超・リテラル重複を作らないよう努める
 - ツール構成は `.qlty/qlty.toml`(golangci-lint はバージョン固定。Go の major 更新時に built-with バージョンの整合を確認)
 
-### 6. 作業単位ごとのレビュー(サブエージェント → Codex の二段)
+### 7. 作業単位ごとのレビュー(実装後。サブエージェント → Codex の二段)
 
 **(a) サブエージェントレビュー**: 実装が一区切りしたら、生成した本人とは別のサブエージェントに、仕様(`docs/specs/latest/`)と突き合わせたレビューをさせる。観点: 仕様トレーサビリティ / クラッシュ耐性・冪等性 / テストの実効性。
 
@@ -69,14 +81,14 @@ qlty fmt --all                                                        # formatte
 
 **(d) 取り込み**: **反証しきれない指摘は必ず修正する**(回帰テスト追加 → 再テスト → qlty ゲート確認)。反証内訳(指摘数 / 不採用数と根拠 / 対応数)をコミットメッセージまたは PR に残す。
 
-### 7. 完了の定義(DoD)— 「完了」と報告する前に必ず確認する
+### 8. 完了の定義(DoD)— 「完了」と報告する前に必ず確認する
 
 `go test` が通っただけで「完了」と早期宣言しない。機能を完了と報告する前に、以下を**すべて**満たしているか確認する(満たしていない項目があれば、ユーザーの指示を待たず自分で実施する):
 
 1. **distillery 同期**: `dist-requirements` **と `dist-spec` の両方**を実施した。usdm / rdra / specs のイベントと `latest/` が同期し、`spec-event.yaml` が最新の event_id を指す(stale でない)。`validateSpecEvent.js` / `validateRequirements.js` / `validateChanges.js` が PASS
 2. **利用者向けドキュメント**: ルート `README.md` / `README.ja.md` / `examples/` を機能に合わせて更新した(docs/specs だけで満足しない)
 3. **テスト**: ATDD/TDD が GREEN、`go test ./... -race` 全 PASS、`go vet` / `gofmt` clean、`qlty check --fail-level medium` exit 0
-4. **レビュー(§6)**: サブエージェント + Codex に加え、**spec↔実装のトレーサビリティ**(BDD・ビジネスルール・設定スキーマ → 実装 + テストの 1 対 1)を確認し、指摘を反証/取り込みした
+4. **レビュー(§2 実装前ゲート + §7 実装後)**: 実装前に §2 の codex spec レビューを通過した(指摘を反証/対応)。実装後はサブエージェント + Codex に加え、**spec↔実装のトレーサビリティ**(BDD・ビジネスルール・設定スキーマ → 実装 + テストの 1 対 1)を確認し、指摘を反証/取り込みした
 5. **自動生成物**: `docs/README.md` を再生成した(mermaid 破損なし)
 
 このチェックリストを飛ばして「実現できました」と言わない。早期宣言は本リポジトリで繰り返した失敗(spec 同期・利用者ドキュメント・専用レビューの失念)の再発原因。
