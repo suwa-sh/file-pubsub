@@ -294,6 +294,11 @@ high_availability:
 - **pull 型 (sftp / ftp / scp / local)**: どのノードが active でも同じ収集元から引くため VIP とは無関係でシンプルです。lease 保持者だけが収集・Archive します。
 - **push 受信 (inbox)**: Producer は VIP 宛に put するため、**VIP と `serve` を同一リソースで束ねる (方式A)** か、全ノードの受信ディレクトリが同一 NFS を指すようにします。`serve` が居ないノードに VIP が付く窓に注意してください。fsnotify は NFS で効かないため、フォールバックポーリング (`fallback_poll_interval`) 前提で動作します。
 
+### サンプル
+
+- **常駐運用 (systemd)**: [examples/ha-systemd](examples/ha-systemd) — 方式B (lease) / 方式A (Pacemaker) 両方の unit・設定・Pacemaker リソース定義とセットアップ手順。
+- **ローカル動作確認 (docker compose)**: [examples/ha-docker-compose](examples/ha-docker-compose) — 共有ボリュームで 2 ノードを起動し、方式B のフェイルオーバー (active 停止 → standby 自動昇格) を手元で確認できます。
+
 ## セキュリティ注記
 
 - **FTP は平文です。** 認証情報もファイル内容も暗号化されずにネットワークを流れます。信頼できるネットワークセグメント内に限定し、サーバが対応していれば sftp を選んでください。

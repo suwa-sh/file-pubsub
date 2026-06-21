@@ -1,0 +1,33 @@
+# file-pubsub HA デモ設定 (docker-compose.yml とセット)。node-a / node-b で共有する。
+# 両ノードは同一 config + 同一 data_dir を参照し、high_availability の lease で
+# 唯一の active を選出する。
+polling_interval: 5
+archive_retention: 7
+retry_max_count: 3
+metrics_port: 9090
+data_dir: /data
+
+# 冗長構成: 方式B (lease 自動奪取、file-pubsub 単体)。
+high_availability:
+  uniqueness_method: lease
+  # デモ用に短縮 (即時フェイルオーバー確認のため)。
+  # 実運用 NFS では actimeo (既定最大 60s) より十分大きく取ること (推奨 90 以上)。
+  lease_ttl: 15
+  heartbeat_interval: 5
+
+topics:
+  # ローカルディレクトリ収集の例 (両ノードが ./sources/local を参照。active だけが収集する)。
+  - name: invoices
+    description: local source HA failover demo
+    source:
+      type: local
+      directory: /sources/local
+      stability_check:
+        interval: 2
+      exclude_patterns:
+        - "*.tmp"
+        - "*.part"
+        - ".*" # dotfile (.gitkeep 等) を収集しない
+    subscriptions:
+      - name: current
+        directory: /data/subscriptions/invoices/current

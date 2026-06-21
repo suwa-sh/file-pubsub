@@ -1,0 +1,36 @@
+# file-pubsub HA (active/standby 自動フェイルオーバー) デモ。方式B (lease 自動奪取)。
+#
+# 2 ノード (node-a / node-b) が共有ボリューム shared-data を同一 data_dir として参照し、
+# lease で唯一の active を選出する。active コンテナを止めると、もう一方が lease の TTL
+# 失効を検知して自動昇格する (single-writer を維持)。
+#
+# 注意: 共有 Docker ボリュームは「共有 data_dir」を模した簡易環境であり NFS そのものでは
+# ない。実運用では NFSv4 共有 + NTP 時刻同期 + lease_ttl を actimeo (既定最大 60s) より十分
+# 大きく取ること (本サンプルは即時フェイルオーバー確認のため lease_ttl=15 に短縮している)。
+services:
+  node-a:
+    build:
+      context: ../..
+    image: file-pubsub:local
+    hostname: node-a # lease の所有者識別に使う (ノードごとに一意であること)
+    volumes:
+      - shared-data:/data # 共有 data_dir (= 実運用の NFS 共有)
+      - ./config.yaml:/etc/file-pubsub/config.yaml:ro
+      - ./sources/local:/sources/local # pull 型ソース (両ノードが同じ実体を参照)
+    ports:
+      - "19090:9090" # active のときだけ /healthz /metrics が応答する
+
+  node-b:
+    build:
+      context: ../..
+    image: file-pubsub:local
+    hostname: node-b
+    volumes:
+      - shared-data:/data
+      - ./config.yaml:/etc/file-pubsub/config.yaml:ro
+      - ./sources/local:/sources/local
+    ports:
+      - "19091:9090"
+
+volumes:
+  shared-data: # node-a / node-b が共有する data_dir

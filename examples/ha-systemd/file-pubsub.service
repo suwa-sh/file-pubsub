@@ -1,0 +1,47 @@
+# file-pubsub HA 常駐 (systemd) サンプル — 方式B (lease 自動奪取)。
+# 配置: /etc/systemd/system/file-pubsub.service
+# 前提:
+#   - バイナリ /usr/local/bin/file-pubsub
+#   - 設定 /etc/file-pubsub/config.yaml (config-lease.yaml をコピー。data_dir は NFS 共有)
+#   - data_dir を全ホストで同一 NFSv4 にマウント (例 /mnt/file-pubsub/data)。NTP 同期必須。
+#
+# 全ホストで本 unit を enable すると、lease により唯一の active が選出され、active 障害時に
+# 別ホストが TTL 失効を検知して自動昇格する (single-writer 維持)。VIP は不要 (pull 型) か、
+# push 受信(inbox)の場合は Producer の put 先を全ホストの同一 NFS 受信ディレクトリに向ける。
+[Unit]
+Description=file-pubsub - legacy file interface to Pub/Sub-style delivery bridge (HA lease)
+Documentation=https://github.com/suwa-sh/file-pubsub
+After=network-online.target remote-fs.target
+Wants=network-online.target
+# data_dir の NFS マウントが用意できてから起動する (パスは config.yaml の data_dir に合わせる)。
+RequiresMountsFor=/mnt/file-pubsub/data
+
+[Service]
+Type=simple
+User=file-pubsub
+Group=file-pubsub
+ExecStart=/usr/local/bin/file-pubsub serve --config /etc/file-pubsub/config.yaml
+# 認証情報の環境変数 (${ENV_VAR} 参照) はここで渡す。例: SFTP_PASSWORD=...
+EnvironmentFile=-/etc/file-pubsub/env
+
+# graceful shutdown: SIGTERM 後、処理中サイクルの完了を待つ (大きいファイルがある場合は延ばす)。
+# 正常停止時は保持中の lease を解放するため、別ホストは TTL を待たず昇格できる。
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+Restart=on-failure
+RestartSec=5
+
+# 同一ホストの二重起動は exit 3 (= 設定/環境起因)。再起動ループに入れない。
+# 他ホストが active の間に起動したノードは standby 待機する (exit せず常駐)。
+RestartPreventExitStatus=3
+
+# ハードニング (必要に応じて調整)。NFS マウントの data_dir を ReadWritePaths に含める。
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/mnt/file-pubsub/data
+
+[Install]
+WantedBy=multi-user.target

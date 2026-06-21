@@ -294,6 +294,11 @@ For Method A, configure the external cluster to start/stop the VIP and `serve` a
 - **Pull (sftp / ftp / scp / local)**: whichever node is active pulls from the same source, so it is independent of the VIP and stays simple. Only the lease holder collects and archives.
 - **Push receive (inbox)**: producers put to the VIP, so either **bundle the VIP and `serve` into one resource (Method A)** or make every node's inbox directory point at the same NFS. Mind the window where the VIP lands on a node without `serve`. Since fsnotify does not work over NFS, operation relies on fallback polling (`fallback_poll_interval`).
 
+### Examples
+
+- **Long-lived deployment (systemd)**: [examples/ha-systemd](examples/ha-systemd) — units, configs, and a Pacemaker resource definition for both Method B (lease) and Method A (Pacemaker), with setup steps.
+- **Local trial (docker compose)**: [examples/ha-docker-compose](examples/ha-docker-compose) — start two nodes on a shared volume and watch Method B failover (stop the active → the standby auto-promotes) on your machine.
+
 ## Security Notes
 
 - **FTP is plaintext.** Both credentials and file contents travel over the network unencrypted. Restrict it to trusted network segments, and prefer sftp if the server supports it.
