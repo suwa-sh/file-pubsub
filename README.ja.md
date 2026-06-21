@@ -182,6 +182,10 @@ docker compose down
 | `topics[].source.auth.key_file` | - | SSH 秘密鍵ファイルパス (sftp / scp)。**パスワードより鍵ファイルを推奨**。password / key_file のどちらかが必須 (リモート時) |
 | `topics[].subscriptions[].name` | ✓ | Subscription 名 (Topic 内で一意) |
 | `topics[].subscriptions[].directory` | ✓ | 配送先ディレクトリ (file-pubsub 稼働サーバ上のローカルパス) |
+| `high_availability` | - | 冗長構成 (active/standby 自動フェイルオーバー) を有効化するブロック。**省略時は従来どおり単一インスタンス運用** (PID による二重起動防止のみ)。詳細は [冗長構成](#冗長構成-activestandby-自動フェイルオーバー) |
+| `high_availability.uniqueness_method` | - | 唯一性保証の方式: `lease` (既定。file-pubsub 単体で TTL 失効により standby が自動昇格) / `external_cluster` (Pacemaker/keepalived 等の外部クラスタ fencing に委譲) |
+| `high_availability.lease_ttl` | - | lease の有効期間 (秒)。既定 `90`。`renewed_at + ttl` を過ぎた lease は stale とみなし奪取対象。**NFS の属性キャッシュ (actimeo、既定最大 60s) より十分大きく取る** |
+| `high_availability.heartbeat_interval` | - | active が `renewed_at` を更新する間隔 (秒)。既定 `lease_ttl / 3`。`lease_ttl` 未満であること |
 
 ### 収集モード: pull / push 受信
 
@@ -242,6 +246,53 @@ groups:
         annotations:
           summary: "topic {{ $labels.topic }} で配信失敗が発生している"
 ```
+
+## 冗長構成 (active/standby 自動フェイルオーバー)
+
+`high_availability` を設定すると、複数ホストで active/standby 構成を組み、active 障害時に standby が自動昇格します。**ブロックを省略すれば従来どおり単一インスタンス運用** (PID による二重起動防止のみ) で動作します。
+
+### 前提構成
+
+- **VIP で束ねた複数ホスト + NFS (v4 推奨) で同一 `data_dir` を共有。** ファイル操作を行う `serve` プロセスは常に 1 つだけ (single-writer を維持)。
+- **NTP による時刻同期。** lease の有効期限判定が時刻に依存します。
+- **`lease_ttl` は NFS の属性キャッシュ (actimeo、既定最大 60s) より十分大きく** 取ります (小さすぎると stale 判定がキャッシュ越しに誤り、誤奪取の恐れ。`lease_ttl <= 60` で警告ログを出します)。
+
+### 唯一性保証の 2 方式 (同一バイナリ)
+
+| | 方式B: `lease` (既定) | 方式A: `external_cluster` |
+|---|---|---|
+| 唯一性の担保 | file-pubsub 単体。lock を lease レコード化 (hostname / boot_id / renewed_at / ttl / generation) し、active が `heartbeat_interval` ごとに `renewed_at` を更新。`renewed_at + ttl` を過ぎた lease を standby が奪取して自動昇格 | 外部クラスタ (Pacemaker / keepalived 等) の **fencing** に委譲。VIP と `serve` を**同一リソースグループ**で束ね、クラスタが同時に 1 ノードだけ起動することを保証 |
+| 起動挙動 | lock 無し→取得して active。他ホストの有効 lease→standby 待機 (TTL 失効を監視)。stale→奪取して昇格。同一ホスト二重起動→終了コード 3 | 常に active として強制起動 (残留 lease を強制奪取)。standby polling は行わない。降格後は再昇格せず終了 (昇格契機は外部クラスタ) |
+| 適する環境 | file-pubsub 単体で完結させたい / 外部クラスタを持ち込みたくない | 既に Pacemaker / keepalived で VIP を管理している |
+
+### split-brain の扱い
+
+NFS では分散合意を完全には実現できないため、フェイルオーバーの瞬間に旧 active と新 active が一時的に重なる窓が原理的に残ります。file-pubsub は重い分散合意機構を導入せず (軽量シングルバイナリを維持)、被害を **「高々 1 メッセージの重複配信 (データ破損・喪失なし)」** に限定します。これは既存の at-least-once の許容範囲です。担保は以下の組み合わせです:
+
+- **メッセージ境界 lease 確認** — 各永続化点 (収集 / Archive 保存 / Fan-out 配置 / Manifest 記録 / 原本 delete / 処理済み記録 / 中断アーカイブ昇格の再開) の直前に lease 保持を確認し、失っていれば処理中のその 1 メッセージで停止して降格します (確認 I/O 失敗時も安全側に倒す fail-closed)。
+- **Manifest の message_id ロック + 世代 CAS + merge precedence** — 配信状態の更新を message_id 単位で直列化し、決着状態 (delivered / dlq) を後退させません。
+
+### 設定例
+
+```yaml
+# 方式B: lease 自動奪取 (file-pubsub 単体)
+high_availability:
+  uniqueness_method: lease   # 既定
+  lease_ttl: 90              # 秒。NFS actimeo より十分大きく (既定 90)
+  heartbeat_interval: 30     # 秒。既定 lease_ttl/3
+
+# 方式A: 外部クラスタ委譲 (Pacemaker / keepalived)
+high_availability:
+  uniqueness_method: external_cluster
+  lease_ttl: 90              # 観測用に記録は残るが昇格契機は外部クラスタ
+```
+
+方式A では VIP と `serve` を同一リソースグループで起動・停止するよう外部クラスタを構成してください (例: systemd unit をクラスタリソース化)。
+
+### 収集モード別の注意
+
+- **pull 型 (sftp / ftp / scp / local)**: どのノードが active でも同じ収集元から引くため VIP とは無関係でシンプルです。lease 保持者だけが収集・Archive します。
+- **push 受信 (inbox)**: Producer は VIP 宛に put するため、**VIP と `serve` を同一リソースで束ねる (方式A)** か、全ノードの受信ディレクトリが同一 NFS を指すようにします。`serve` が居ないノードに VIP が付く窓に注意してください。fsnotify は NFS で効かないため、フォールバックポーリング (`fallback_poll_interval`) 前提で動作します。
 
 ## セキュリティ注記
 

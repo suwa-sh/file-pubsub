@@ -67,6 +67,8 @@ func Validate(c *Config) ValidationErrors {
 		add("topics", "no topics are defined", "define at least one topic with a source and subscriptions")
 	}
 
+	validateHighAvailability(c.HighAvailability, add)
+
 	topicNames := map[string]bool{}
 	for i, t := range c.Topics {
 		tp := fmt.Sprintf("topics[%d]", i)
@@ -103,6 +105,32 @@ func Validate(c *Config) ValidationErrors {
 		}
 	}
 	return errs
+}
+
+// validateHighAvailability は冗長化設定を検査する (SPEC-015-02, SPEC-017-01)。
+// nil(ブロック省略)は単一インスタンス運用なので検査しない(後方互換)。
+func validateHighAvailability(ha *HighAvailability, add func(keyPath, cause, remedy string)) {
+	if ha == nil {
+		return
+	}
+	switch ha.UniquenessMethod {
+	case UniquenessMethodLease, UniquenessMethodExternalCluster:
+	default:
+		add("high_availability.uniqueness_method", fmt.Sprintf("uniqueness method %q is not supported", ha.UniquenessMethod), "set uniqueness_method to lease or external_cluster (default: lease)")
+	}
+	if ha.LeaseTTL <= 0 {
+		add("high_availability.lease_ttl", "lease ttl must be a positive number of seconds", "set lease_ttl to a value such as 90")
+	}
+	if ha.HeartbeatInterval <= 0 {
+		add("high_availability.heartbeat_interval", "heartbeat interval must be a positive number of seconds", "set heartbeat_interval to a value such as 30")
+	}
+	// heartbeat は lease_ttl より十分小さくなければ stale 判定前に更新できない (SPEC-015-03)。
+	if ha.LeaseTTL > 0 && ha.HeartbeatInterval >= ha.LeaseTTL {
+		add("high_availability.heartbeat_interval", "heartbeat interval must be smaller than lease_ttl", "set heartbeat_interval well below lease_ttl (e.g. lease_ttl/3)")
+	}
+	// 注: lease_ttl は NFS の actimeo(既定 60s)より十分大きくすることが望ましいが (SPEC-017-01)、
+	// actimeo はマウントオプション依存で config からは確定できないため過剰なエラーにはしない
+	// (既存の config パッケージに警告機構が無いため、ここでは検証コメントの根拠提示に留める)。
 }
 
 // validateSource はソース定義 1 件を検査し、違反を add で報告する。

@@ -182,6 +182,10 @@ All configuration lives in a single YAML file. `${ENV_VAR}` inside string values
 | `topics[].source.auth.key_file` | - | SSH private key file path (sftp / scp). **A key file is recommended over a password**. Either password or key_file is required (for remote sources) |
 | `topics[].subscriptions[].name` | ✓ | Subscription name (unique within a Topic) |
 | `topics[].subscriptions[].directory` | ✓ | Delivery directory (a local path on the server running file-pubsub) |
+| `high_availability` | - | Block that enables a redundant (active/standby auto-failover) deployment. **When omitted, the conventional single-instance mode applies** (PID-based double-start prevention only). See [High Availability](#high-availability-activestandby-auto-failover) |
+| `high_availability.uniqueness_method` | - | Uniqueness guarantee: `lease` (default; file-pubsub alone, a standby auto-promotes on TTL expiry) / `external_cluster` (delegated to an external cluster's fencing, e.g. Pacemaker/keepalived) |
+| `high_availability.lease_ttl` | - | Lease validity (seconds). Default `90`. A lease past `renewed_at + ttl` is treated as stale and is eligible for takeover. **Set it well above the NFS attribute cache (actimeo, up to 60s by default)** |
+| `high_availability.heartbeat_interval` | - | Interval (seconds) at which the active renews `renewed_at`. Default `lease_ttl / 3`. Must be below `lease_ttl` |
 
 ### Collection modes: pull vs push receive
 
@@ -242,6 +246,53 @@ groups:
         annotations:
           summary: "Delivery failures are occurring for topic {{ $labels.topic }}"
 ```
+
+## High Availability (active/standby auto-failover)
+
+Configure `high_availability` to run an active/standby deployment across multiple hosts; a standby auto-promotes when the active fails. **Omit the block to keep the conventional single-instance mode** (PID-based double-start prevention only).
+
+### Topology prerequisites
+
+- **Multiple hosts fronted by a VIP, sharing the same `data_dir` over NFS (v4 recommended).** Exactly one file-operating `serve` process runs at a time (single-writer is preserved).
+- **NTP time synchronization.** Lease expiry decisions depend on the clock.
+- **Set `lease_ttl` well above the NFS attribute cache** (actimeo, up to 60s by default); too small a TTL risks a false stale takeover through stale cached attributes (a warning is logged for `lease_ttl <= 60`).
+
+### Two uniqueness methods (same binary)
+
+| | Method B: `lease` (default) | Method A: `external_cluster` |
+|---|---|---|
+| Uniqueness guarantee | file-pubsub alone. The lock becomes a lease record (hostname / boot_id / renewed_at / ttl / generation); the active renews `renewed_at` every `heartbeat_interval`. A standby takes over a lease past `renewed_at + ttl` and auto-promotes | Delegated to an external cluster's **fencing** (Pacemaker / keepalived, etc.). Bundle the VIP and `serve` into the **same resource group** so the cluster runs exactly one node at a time |
+| Startup behavior | No lock → acquire and become active. Another host's valid lease → standby (watch for TTL expiry). Stale → take over and promote. Same-host double start → exit code 3 | Always starts active by forcibly taking over any residual lease; no standby polling. After demotion it exits without re-promoting (the cluster drives promotion) |
+| Best for | Keeping everything within file-pubsub / avoiding an external cluster | Environments already managing a VIP with Pacemaker / keepalived |
+
+### Split-brain handling
+
+NFS cannot fully implement distributed consensus, so a brief window where the old and new active overlap remains inherent at failover. file-pubsub introduces no heavy consensus machinery (it stays a lightweight single binary) and instead bounds the damage to **"at most one duplicated message (no corruption, no loss)"**, which is within the existing at-least-once tolerance. This is enforced by:
+
+- **Message-boundary lease checks** — before each persistence point (collect / archive / fan-out placement / manifest record / source delete / processed record / resuming an interrupted archive promotion) the active re-checks that it still holds the lease, and if not, stops at that single in-flight message and demotes (fail-closed on check I/O failure too).
+- **Per-message_id manifest lock + generation CAS + merge precedence** — delivery-state updates are serialized per message_id and never roll back a settled state (delivered / dlq).
+
+### Configuration examples
+
+```yaml
+# Method B: lease auto-takeover (file-pubsub alone)
+high_availability:
+  uniqueness_method: lease   # default
+  lease_ttl: 90              # seconds; well above the NFS actimeo (default 90)
+  heartbeat_interval: 30     # seconds; default lease_ttl/3
+
+# Method A: external cluster delegation (Pacemaker / keepalived)
+high_availability:
+  uniqueness_method: external_cluster
+  lease_ttl: 90              # recorded for observability; the cluster drives promotion
+```
+
+For Method A, configure the external cluster to start/stop the VIP and `serve` as one resource group (e.g. make the systemd unit a cluster resource).
+
+### Notes by collection mode
+
+- **Pull (sftp / ftp / scp / local)**: whichever node is active pulls from the same source, so it is independent of the VIP and stays simple. Only the lease holder collects and archives.
+- **Push receive (inbox)**: producers put to the VIP, so either **bundle the VIP and `serve` into one resource (Method A)** or make every node's inbox directory point at the same NFS. Mind the window where the VIP lands on a node without `serve`. Since fsnotify does not work over NFS, operation relies on fallback polling (`fallback_poll_interval`).
 
 ## Security Notes
 

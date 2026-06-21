@@ -5,6 +5,7 @@
 package usecase
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"time"
@@ -16,6 +17,20 @@ import (
 	"github.com/suwa-sh/file-pubsub/internal/gateway/store"
 	"github.com/suwa-sh/file-pubsub/internal/logging"
 )
+
+// LeaseChecker はメッセージ境界・永続化前の lease 保持確認を抽象化する
+// (spec-decision-011)。active な serve は各永続化点の前にこれを呼び、lease を
+// 失っていれば「処理中のその1メッセージ」で停止して降格する。返り値は
+// (保持しているか, I/O エラー)。read I/O が失敗した場合は保持を楽観視せず
+// (false, error) を返し、呼び出し側が安全側 (fail-closed) に倒せるようにする。
+type LeaseChecker interface {
+	HoldsLease() (bool, error)
+}
+
+// errLeaseLost は lease を失った (または保持を確認できなかった) ためメッセージ
+// 処理を中断することを表す sentinel エラー。サイクルのステージはこれを検知して
+// 以降のメッセージを処理せずに抜ける (高々 1 メッセージの被害限定)。
+var errLeaseLost = errors.New("lease not held: stopping at message boundary")
 
 // Pipeline は各ストア・ロガー・メトリクスレジストリを束ねる。
 // Log と Metrics は nil でもよい (例: 読み取り専用の CLI 利用)。Now と
@@ -30,6 +45,11 @@ type Pipeline struct {
 	Metrics      *metricsreg.Registry
 	Now          func() time.Time
 	NewConnector func(source.Options) (source.Connector, error)
+
+	// Lease はメッセージ境界・永続化前の lease 保持確認 (active のみ)。nil の場合は
+	// 常に保持しているとみなし lease 確認をスキップする (単一インスタンス運用の
+	// 後方互換)。daemon が active 稼働時のみ設定し、降格・停止時に nil へ戻す。
+	Lease LeaseChecker
 
 	// observations はトピック別の安定判定観測値をポーリングサイクル間で
 	// 持ち越す (メモリ上のみ: 再起動時はサイクルが 1 回余計に必要になるだけ)。
@@ -67,6 +87,79 @@ func (p *Pipeline) emit(e logging.Event) {
 	if p.Log != nil {
 		p.Log.Emit(e)
 	}
+}
+
+// ensureLease は各メッセージの永続化点に入る前の lease 保持確認を行う
+// (メッセージ境界 lease 確認、spec-decision-011)。Lease が nil なら単一インスタンス
+// 運用とみなし常に保持している扱いで nil を返す (後方互換、確認スキップ)。lease を
+// 失っているか、確認 I/O が失敗した場合は errLeaseLost を返し (fail-closed)、呼び出し
+// 側はそのメッセージで停止して以降のメッセージを処理しない。
+func (p *Pipeline) ensureLease() error {
+	if p.Lease == nil {
+		return nil // 単一インスタンス: lease 確認をスキップ (後方互換)
+	}
+	held, err := p.Lease.HoldsLease()
+	if err != nil {
+		// 保持を確認できない: 楽観視せず安全側に倒す (fail-closed)。
+		return fmt.Errorf("%w: lease check failed: %v", errLeaseLost, err)
+	}
+	if !held {
+		return errLeaseLost
+	}
+	return nil
+}
+
+// emitLeaseStop は lease 喪失でメッセージ境界停止したことを構造化ログに出す。
+// stage は停止した永続化点 (collect / fanout / retry) を示す。
+func (p *Pipeline) emitLeaseStop(messageID, topic, stage string) {
+	p.emit(logging.Event{
+		MessageID:   messageID,
+		Topic:       topic,
+		EventType:   "lease_lost",
+		ErrorDetail: fmt.Sprintf("lease not held before %s persistence point. stopping at this message to limit duplication to at most one message; demoting to standby", stage),
+	})
+}
+
+// recordDelivery は配信結果 (delivered などのサブスクリプション別配送状態) を、ロック保持下の
+// 統一 Update API で永続化する (read-merge-write + 世代 CAS、spec-decision-011)。マージ・監査
+// 追記・RetryCount 反映・Status 確定 (settle) をすべて 1 つのロック区間で行うことで、ロック外の
+// 素の Put による lost update 窓 (§7 指摘 M-1 / codex blocker) を塞ぐ。これにより 2 active 同時
+// 更新でも決着状態 (delivered / dlq) を取りこぼさない (merge precedence)。返り値は確定後の最新
+// Manifest。Manifest 更新も永続化点であり、呼び出し側は事前に ensureLease で lease 保持を確認する。
+func (p *Pipeline) recordDelivery(m *store.Manifest, t *config.Topic) (*store.Manifest, error) {
+	return p.Manifests.Update(m.MessageID, func(base *store.Manifest) error {
+		// 配送状態を merge precedence でマージ (決着状態を後退させない)。
+		base.MergeSubscriptionsFrom(m)
+		// 監査イベントは追記専用。同一性キーで未反映分のみ足す。2 active が別イベントを
+		// 同時追記し base に他 active のイベントが先に入っていても、自分の新規イベントを
+		// 取りこぼさない (len prefix 比較だと競合時に drop し得るため identity merge にする)。
+		base.AppendMissingEvents(m.DeliveryEvents)
+		// RetryCount は後退させない。
+		if m.RetryCount > base.RetryCount {
+			base.RetryCount = m.RetryCount
+		}
+		// マージ後の最新サブスクリプション状態から Status を導出して確定させる。
+		p.settle(base, t)
+		return nil
+	})
+}
+
+// transitionStatus はロック保持下で from → to のメッセージ状態遷移を冪等に行う
+// (中間状態 delivering / retrying などの永続化を統一 Update 経由にして lock 外 Put を排除)。
+// base が既に from でない (他 active が先行して遷移済み、またはクラッシュ再開で進行済み) 場合は
+// 書き込まず no-op とする。遷移自体は domain.ValidateTransition で正当性を担保する。
+func (p *Pipeline) transitionStatus(messageID string, from, to domain.MessageStatus) error {
+	_, err := p.Manifests.Update(messageID, func(base *store.Manifest) error {
+		if base.Status != from {
+			return store.ErrSkipManifestUpdate // 既に進行済み: 冪等 no-op
+		}
+		if err := domain.ValidateTransition(base.Status, to); err != nil {
+			return err
+		}
+		base.Status = to
+		return nil
+	})
+	return err
 }
 
 func (p *Pipeline) findTopic(name string) *config.Topic {

@@ -243,7 +243,7 @@ SUC --> SGW["共有 gateway 層"]
 | 14 | Specs | [message_id の同一秒衝突を連番付与で回避し、marker+copy の残存マーカーは新契機にしない](specs/events/20260617_121332_harden_idempotency/decisions/spec-decision-008.yaml) | approved |
 | 15 | Specs | [唯一性保証を方式B(lease 自動奪取)と方式A(外部クラスタ委譲/fencing)の二方式併用とし、同一バイナリで両環境をカバーする](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-009.yaml) | approved |
 | 16 | Specs | [lease 方式の split-brain 被害を、既存の冪等 I/O(AtomicWrite + at-least-once 冪等再開 + fail-closed 照合)で受動的に限定する(被害なし=破損・喪失なし。上限「高々1メッセージ」の能動担保は spec-decision-011)](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-010.yaml) | approved |
-| 17 | Specs | [split-brain の重複上限「高々1メッセージ」(REQ-016)を、メッセージ境界 lease 確認と Manifest の read-merge-write で実装上維持する(案A)](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-011.yaml) | approved |
+| 17 | Specs | [split-brain の重複上限「高々1メッセージ」(REQ-016)を、message_id ロック + 世代 CAS + read-merge-write とメッセージ境界 lease 確認で実装担保する(案Z)](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-011.yaml) | approved |
 
 ## イベント履歴
 

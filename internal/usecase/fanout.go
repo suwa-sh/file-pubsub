@@ -31,17 +31,24 @@ func (p *Pipeline) Fanout(ctx context.Context) {
 			continue
 		}
 
+		// メッセージ境界 lease 確認: Fan-out 配置・Manifest 記録に入る前に lease 保持を
+		// 再確認する。失っていればこのメッセージで停止し以降を処理しない (spec-decision-011)。
+		if err := p.ensureLease(); err != nil {
+			p.emitLeaseStop(m.MessageID, m.Topic, "fanout")
+			return
+		}
+
 		if m.Status == domain.StatusArchived {
-			m.Status = domain.StatusDelivering
-			if err := p.Manifests.Put(m); err != nil {
+			// 中間状態 archived → delivering をロック保持下の Update で記録する (lock 外 Put 排除)。
+			if err := p.transitionStatus(m.MessageID, domain.StatusArchived, domain.StatusDelivering); err != nil {
 				p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "fanout_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
 				continue
 			}
+			m.Status = domain.StatusDelivering // in-memory を同期 (後続の deliverPending / recordDelivery 用)
 		}
 
 		p.deliverPending(m, t)
-		p.settle(m, t)
-		if err := p.Manifests.Put(m); err != nil {
+		if _, err := p.recordDelivery(m, t); err != nil {
 			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "fanout_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. undelivered subscriptions are re-resolved from the manifest on the next polling cycle", err)})
 		}
 	}

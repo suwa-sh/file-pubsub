@@ -273,6 +273,119 @@ func TestExpandEnv_参照とリテラルが混在する場合_参照だけ展開
 	}
 }
 
+func TestApplyDefaults_highAvailabilityを省略した場合_HighAvailabilityがnilで単一インスタンスになること(t *testing.T) {
+	// Arrange
+	yaml := `
+polling_interval: 60
+archive_retention: 90
+retry_max_count: 5
+metrics_port: 9090
+topics:
+  - name: orders
+    source:
+      type: local
+      directory: /out/orders
+      stability_check:
+        interval: 10
+    subscriptions:
+      - name: current
+        directory: /pub/orders/current
+`
+	path := writeConfig(t, yaml)
+
+	// Act
+	cfg, err := Load(path)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.HighAvailability != nil {
+		t.Errorf("HighAvailability = %+v, want nil (single instance)", cfg.HighAvailability)
+	}
+}
+
+func TestApplyDefaults_uniquenessMethodを省略した場合_leaseが補完されること(t *testing.T) {
+	// Arrange
+	cfg := baseConfig()
+	cfg.HighAvailability = &HighAvailability{}
+
+	// Act
+	cfg.applyDefaults("/tmp/config.yaml")
+
+	// Assert
+	if cfg.HighAvailability.UniquenessMethod != UniquenessMethodLease {
+		t.Errorf("UniquenessMethod = %q, want %q", cfg.HighAvailability.UniquenessMethod, UniquenessMethodLease)
+	}
+}
+
+func TestApplyDefaults_leaseTTLを省略した場合_90が補完されること(t *testing.T) {
+	// Arrange
+	cfg := baseConfig()
+	cfg.HighAvailability = &HighAvailability{}
+
+	// Act
+	cfg.applyDefaults("/tmp/config.yaml")
+
+	// Assert
+	if cfg.HighAvailability.LeaseTTL != DefaultLeaseTTL {
+		t.Errorf("LeaseTTL = %d, want %d", cfg.HighAvailability.LeaseTTL, DefaultLeaseTTL)
+	}
+}
+
+func TestApplyDefaults_heartbeatIntervalを省略した場合_leaseTTLの3分の1が補完されること(t *testing.T) {
+	// Arrange
+	cfg := baseConfig()
+	cfg.HighAvailability = &HighAvailability{}
+
+	// Act
+	cfg.applyDefaults("/tmp/config.yaml")
+
+	// Assert
+	want := cfg.HighAvailability.LeaseTTL / 3
+	if cfg.HighAvailability.HeartbeatInterval != want {
+		t.Errorf("HeartbeatInterval = %d, want %d (lease_ttl/3)", cfg.HighAvailability.HeartbeatInterval, want)
+	}
+}
+
+func TestValidate_uniquenessMethodが不正値の場合_ValidationErrorになること(t *testing.T) {
+	// Arrange
+	cfg := baseConfig()
+	cfg.HighAvailability = &HighAvailability{UniquenessMethod: "bogus", LeaseTTL: 90, HeartbeatInterval: 30}
+
+	// Act
+	verrs := Validate(cfg)
+
+	// Assert
+	if !hasKeyPath(verrs, "high_availability.uniqueness_method") {
+		t.Errorf("missing validation error for high_availability.uniqueness_method, got %v", verrs)
+	}
+}
+
+func TestValidate_heartbeatIntervalがleaseTTL以上の場合_ValidationErrorになること(t *testing.T) {
+	// Arrange
+	cfg := baseConfig()
+	cfg.HighAvailability = &HighAvailability{UniquenessMethod: UniquenessMethodLease, LeaseTTL: 90, HeartbeatInterval: 90}
+
+	// Act
+	verrs := Validate(cfg)
+
+	// Assert
+	if !hasKeyPath(verrs, "high_availability.heartbeat_interval") {
+		t.Errorf("missing validation error for high_availability.heartbeat_interval, got %v", verrs)
+	}
+}
+
+// hasKeyPath は verrs に指定キーパスの違反が含まれるかを返すヘルパー。
+func hasKeyPath(verrs ValidationErrors, keyPath string) bool {
+	for _, v := range verrs {
+		if v.KeyPath == keyPath {
+			return true
+		}
+	}
+	return false
+}
+
 // baseConfig はバリデーションを通過する基準 Config を生成するヘルパー。
 func baseConfig() *Config {
 	return &Config{

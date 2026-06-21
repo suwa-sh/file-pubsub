@@ -38,12 +38,20 @@ func (p *Pipeline) Retry(ctx context.Context) {
 			continue
 		}
 
+		// メッセージ境界 lease 確認: 再配信 (Fan-out 配置)・DLQ 隔離・Manifest 記録に
+		// 入る前に lease 保持を再確認する。失っていればこのメッセージで停止する。
+		if err := p.ensureLease(); err != nil {
+			p.emitLeaseStop(m.MessageID, m.Topic, "retry")
+			return
+		}
+
 		if m.Status == domain.StatusFailed {
-			m.Status = domain.StatusRetrying
-			if err := p.Manifests.Put(m); err != nil {
+			// 中間状態 failed → retrying をロック保持下の Update で記録する (lock 外 Put 排除)。
+			if err := p.transitionStatus(m.MessageID, domain.StatusFailed, domain.StatusRetrying); err != nil {
 				p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
 				continue
 			}
+			m.Status = domain.StatusRetrying // in-memory を同期
 		}
 
 		if domain.ShouldIsolate(m.RetryCount, p.Cfg.RetryMaxCount) {
@@ -51,18 +59,18 @@ func (p *Pipeline) Retry(ctx context.Context) {
 			continue
 		}
 
-		m.Status = domain.StatusDelivering
-		if err := p.Manifests.Put(m); err != nil {
+		// 中間状態 retrying → delivering をロック保持下の Update で記録する (lock 外 Put 排除)。
+		if err := p.transitionStatus(m.MessageID, domain.StatusRetrying, domain.StatusDelivering); err != nil {
 			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
 			continue
 		}
+		m.Status = domain.StatusDelivering // in-memory を同期
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry"})
 		failures := p.deliverPending(m, t)
 		if failures > 0 {
 			m.RetryCount++
 		}
-		p.settle(m, t)
-		if err := p.Manifests.Put(m); err != nil {
+		if _, err := p.recordDelivery(m, t); err != nil {
 			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
 		}
 	}
@@ -96,9 +104,12 @@ func (p *Pipeline) isolateToDLQ(m *store.Manifest, t *config.Topic) {
 		IsolatedAt:      now,
 	}
 	if err := p.DLQ.Isolate(p.Archive.ArchivePath(m.Topic, m.MessageID), meta); err != nil {
-		// マニフェストを failed のまま保ち、次サイクルで隔離を再試行する。
-		m.Status = domain.StatusFailed
-		_ = p.Manifests.Put(m)
+		// マニフェストを failed に戻し、次サイクルで隔離を再試行する。retrying → failed の
+		// 復帰もロック保持下の Update 経由にして lock 外 Put を排除する。
+		if err := p.transitionStatus(m.MessageID, domain.StatusRetrying, domain.StatusFailed); err != nil {
+			p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "dlq_isolation_failed", ErrorDetail: fmt.Sprintf("revert to failed after isolation error failed: %v. retried on the next polling cycle", err)})
+		}
+		m.Status = domain.StatusFailed // in-memory を同期
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "dlq_isolation_failed", ErrorDetail: fmt.Sprintf("%v. check the dlq directory permissions and disk space; the isolation is retried on the next polling cycle", err)})
 		return
 	}
@@ -108,8 +119,8 @@ func (p *Pipeline) isolateToDLQ(m *store.Manifest, t *config.Topic) {
 		m.AppendEvent(store.DeliveryEvent{At: now, Subscription: name, EventType: "dlq_isolated", Detail: reason})
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, Subscription: name, EventType: "dlq_isolated", ErrorDetail: fmt.Sprintf("retry limit (%d) exceeded: %s. inspect the cause with status --status dlq and redeliver with the replay command after fixing it", p.Cfg.RetryMaxCount, reason)})
 	}
-	p.settle(m, t)
-	if err := p.Manifests.Put(m); err != nil {
+	// dlq は決着状態。PutMerged の merge precedence で 2 active 同時更新でも取りこぼさない。
+	if _, err := p.recordDelivery(m, t); err != nil {
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "retry_failed", ErrorDetail: fmt.Sprintf("manifest update failed: %v. retried on the next polling cycle", err)})
 	}
 }
