@@ -1,0 +1,60 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "specification"
+artifact_id: "spec-decision-009"
+title: "唯一性保証を方式B(lease 自動奪取)と方式A(外部クラスタ委譲/fencing)の二方式併用とし、同一バイナリで両環境をカバーする"
+status: "approved"
+generated_at: "2026-06-20T17:15:35+09:00"
+context: |
+  active/standby 自動フェイルオーバー(REQ-015)に対応するにあたり、serve プロセスを常に1つだけ
+  (single-writer)に保つ唯一性をどう保証するかが論点となった。前提構成は VIP で束ねた複数ホスト +
+  NFS 共有 data_dir。導入先の運用基盤は二極化する:
+  ① 外部クラスタ(Pacemaker/keepalived 等)を既に持つ環境では、fencing が唯一性を強く保証でき、
+     VIP と serve を同一リソースグループで束ねられる。file-pubsub 側で自動奪取すると外部クラスタの
+     制御と二重になり危険。
+  ② 外部クラスタを持たない/持ち込みたくない環境では、file-pubsub 単体で standby が自動昇格できる
+     ことが求められる。
+  さらに、現状の Lock は PID 生存確認(os.FindProcess + Signal(0))で stale 判定するが、これは
+  マルチホストで他ホストの PID を判定できず破綻する。lease レコード化が前提となる(SPEC-015-01)。
+  論点は、(1)唯一性保証を単一方式に固定するか二方式併用にするか (2)lease の stale 判定を何で行うか
+  であった。
+decision: |
+  唯一性保証方式を設定で切り替え・併用できる二方式併用とする(バリエーション「唯一性保証方式」)。
+  - 方式B(lease 自動奪取): file-pubsub 単体。Lock を lease レコード(hostname + boot-id +
+    acquired_at + renewed_at + ttl + generation)化し、active な serve が heartbeat 間隔で renewed_at を更新する。
+    standby は lease の renewed_at + ttl 超過(stale)を検知して lease を奪取し active へ昇格する。
+    stale 判定は PID 生存確認に依存せず renewed_at + ttl 超過で行う(マルチホスト対応)。
+  - heartbeat の TOCTOU 防止(generation CAS): lease に generation(世代カウンタ)を持たせ、heartbeat 更新と
+    lease 奪取を generation CAS で直列化する。手順は read(hostname + boot_id + generation を観測)→ self
+    (hostname + boot_id)一致かつ generation 一致を確認 → generation を +1 して更新書き込み(renewed_at と generation を
+    一緒に書く)。奪取側は観測した generation を進めて書く。これにより『旧 active が新 active の lease を check→update の
+    隙に上書きで奪い返す』経路を generation 不一致で検出し ErrLeaseLost にする。書き込みは lease 更新ロックまたは
+    O_EXCL 一時ファイル → rename で行う。
+  - 方式A(外部クラスタ委譲): Pacemaker/keepalived 等の fencing が唯一性を保証し、VIP と serve を
+    同一リソースグループで束ねる。file-pubsub は TTL 失効による自動奪取を行わず外部クラスタに委ねる。
+    昇格契機は外部クラスタが serve リソースを起動した時点。
+  両方式を同一バイナリでカバーし、設定で選択・併用できる。lease の TTL は NFS の属性キャッシュ
+  (actimeo、既定最大60s)より十分大きく設定でき、省略時の既定値も属性キャッシュより大きく取る
+  (SPEC-017-01)。これにより、外部クラスタを持つ環境・持たない環境の双方で single-writer を維持した
+  まま active/standby 冗長化できる。
+  既知の制約: NFS では O_CREATE|O_EXCL・read/write の原子性が実装・バージョン依存であり、lease の generation CAS でも
+  完全な分散排他は保証できない。本機構は実務上の TOCTOU 検出強化であり exactly-once は保証しない。残る理論限界による
+  split-brain の窓の被害は spec-decision-010(受動的被害限定)・spec-decision-011(能動的上限担保)で吸収する。
+consequences:
+  positive:
+    - "外部クラスタの有無に関わらず同一バイナリで active/standby 冗長化でき、導入先環境を選ばない"
+    - "lease の renewed_at + ttl による stale 判定でマルチホストでも他ホストの旧 active を安全に判定でき、PID 生存確認の破綻を解消する"
+    - "方式A では fencing に唯一性を委ね二重制御を避ける。方式B では外部依存なしで standby が自動昇格する"
+    - "lease の generation CAS により旧 active が新 active の lease を heartbeat の check→update の隙に奪い返す TOCTOU を検出できる(ErrLeaseLost で自発降格)"
+  negative:
+    - "lease の heartbeat 更新 I/O が定常的に発生する(NFS 上の小さな書き込み)。generation CAS により read→update の 2 段操作になる"
+    - "**既知の制約**: NFS では原子性が実装・バージョン依存のため generation CAS でも完全な分散排他は保証できず、稀に TOCTOU が破れうる(被害は spec-decision-010/011 で限定。exactly-once は保証しない)"
+    - "方式B は lease 方式の split-brain の窓を原理的に持つ(被害限定は spec-decision-010 で扱う)"
+    - "設定項目(唯一性保証方式 / lease TTL / heartbeat 間隔)と運用前提(NFSv4 / NTP / TTL を actimeo より十分大きく)が増える"
+alternatives_considered:
+  - name: "唯一性保証を方式B(lease 自動奪取)単一に固定する"
+    reason_rejected: "外部クラスタを持つ環境では fencing と TTL 自動奪取が二重制御になり危険。VIP と serve を束ねる方式A 運用を捨てることになり導入先を狭めるため不採用"
+  - name: "唯一性保証を方式A(外部クラスタ委譲)単一に固定する"
+    reason_rejected: "外部クラスタを持たない/持ち込みたくない環境で自動フェイルオーバーできない。file-pubsub 単体での冗長化要求(REQ-015)を満たせないため不採用"
+  - name: "現状の PID 生存確認による stale 判定を維持する"
+    reason_rejected: "マルチホストでは他ホストの PID を判定できず stale 判定が破綻する(SPEC-015-01)。lease の renewed_at + ttl 超過判定へ置換する必要があるため不採用"

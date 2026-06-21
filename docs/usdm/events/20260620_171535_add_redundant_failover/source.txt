@@ -1,0 +1,19 @@
+冗長構成(active/standby 自動フェイルオーバー)に対応する。
+
+【前提構成】
+VIP で束ねた複数ホスト + NFS で同一 data_dir を共有。ファイル操作を行う serve プロセスは常に1つだけ(single-writer を維持)。
+
+【方針: lease 方式と外部クラスタ(fencing)の両立】
+- lock を lease レコード化する: hostname + boot-id + acquired_at + renewed_at + ttl。heartbeat で renewed_at を定期更新する。現状の PID 生存確認(os.FindProcess+Signal(0))による stale 判定はマルチホストで破綻するため置換する。
+- 設定で「lease 自動奪取(方式B: file-pubsub 単体で TTL 失効により standby が自動昇格)」と「外部クラスタ委譲(方式A: Pacemaker/keepalived 等の fencing が唯一性を保証、VIP と serve を同一リソースで束ねる)」を切り替え・併用可能にする。両環境を同一バイナリでカバーする。
+- split-brain の窓は lease 方式では原理的に残るが、被害は AtomicWrite + at-least-once 冪等再開(resumeArchiving) + Manifest/Processed 冪等照合(fail-closed)により「高々1メッセージの重複配信」に限定され、データ破損・喪失は起きない(既存の at-least-once 許容範囲)。
+
+【制約・前提】
+- NFSv4 推奨(O_CREATE|O_EXCL の原子性)。NTP による時刻同期が前提(lease/TTL 判定が時刻依存)。lease TTL は NFS の属性キャッシュ(actimeo, 既定最大60s)より十分大きく取る。
+- fsnotify は NFS で効かないため push受信(inbox)モードは fallback polling 前提(既に対応済み)。
+- VIP と serve は同一リソースグループで束ねる(方式A)。push型では「serve が居ないノードに VIP が付く」窓に注意。
+- pull型(sftp/ftp/local)はどのノードが active でも同一ソースを引くため VIP 無関係でシンプル。lock(lease)保持者だけが pull/archive する。
+
+【既存の設計判断の見直し】
+- アーキの CTP-006「単一インスタンス前提(HAなし)」を見直す。
+- NFR A.2.1.1 サーバ内冗長化 Lv1(冗長化なし、再起動で復旧)→ active/standby 冗長化ありへ見直す。

@@ -1,0 +1,39 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "architecture"
+artifact_id: "arch-decision-005"
+title: "唯一性保証の二方式併用(方式B lease 自動奪取 + 方式A 外部クラスタ fencing 委譲)を同一バイナリで提供"
+status: "approved"
+generated_at: "2026-06-20T20:39:07"
+context: |
+  REQ-018/SPEC-018-01 により単一インスタンス前提(HA なし)を改め、VIP + 共有 data_dir(NFSv4 推奨)の
+  active/standby 冗長化を前提とする(NFR A.2.1.1 Lv4 完全冗長化・自動切替)。冗長化の核心は
+  「serve プロセスを常に 1 つだけ(single-writer)に保つ唯一性保証」をどう実現するかである。
+  導入先には Pacemaker/keepalived 等の外部クラスタを持つ現場と、外部クラスタを持たず
+  file-pubsub 単体で完結させたい現場の両方が想定される。シングルバイナリ配布の制約(追加ランタイム不要)も維持する必要がある。
+decision: |
+  唯一性保証を二方式併用・同一バイナリで提供し、設定(uniqueness_method)で切替・併用できるようにする。
+  方式B(lease 自動奪取): file-pubsub 単体で完結。Lock を lease レコード(hostname/boot-id/acquired_at/
+  renewed_at/ttl)化し、active が heartbeat で renewed_at を更新する。standby は renewed_at + ttl 超過(stale)を
+  検知して lease を奪取し自動昇格する。stale 判定は PID 生存確認(マルチホストで他ホストの PID を判定できない)では
+  なく renewed_at + ttl で行う。lease TTL は NFS 属性キャッシュ最大(actimeo 既定 60s)より十分大きく取る。
+  方式A(外部クラスタ委譲): Pacemaker/keepalived 等の fencing が serve リソースの起動/停止を制御し、
+  VIP + serve を同一リソースグループで束ねる。file-pubsub は TTL 失効による自動奪取を行わず唯一性保証を外部クラスタに委ねる。
+  Raft/Paxos 等の重い分散合意機構は導入せず、軽量シングルバイナリを維持する。
+consequences:
+  positive:
+    - "外部クラスタの有無に関わらず同一バイナリで active/standby を構成でき、導入先の運用基盤に追従できる"
+    - "方式B は追加コンポーネントなしで自動フェイルオーバーを実現し、シングルバイナリ配布の制約を崩さない"
+    - "方式A は実績ある外部クラスタの fencing に唯一性を委ね、VIP と serve の同居(特に push 受信)を保証できる"
+    - "stale 判定を renewed_at + ttl にしたことでマルチホスト(2 ノード active/standby)で正しく機能する"
+  negative:
+    - "方式B は lease の renewed_at + ttl 判定がノード間時刻に依存するため NTP 同期が前提となる"
+    - "方式B では lease TTL を NFS 属性キャッシュ(actimeo)より大きく取る必要があり、TTL ぶんの切替遅延が生じる"
+    - "二方式を保守する分、設定とテスト(split-brain シナリオ)の組み合わせが増える"
+alternatives_considered:
+  - name: "外部クラスタ(方式A)のみに一本化"
+    reason_rejected: "外部クラスタを持たない現場で導入できず、シングルバイナリで完結したい要望(REQ-018)を満たせないため不採用"
+  - name: "Raft/Paxos 等の分散合意でリーダー選出"
+    reason_rejected: "軽量シングルバイナリ・外部 DB なしの設計原則に反し、運用・実装コストが過大。被害上限(高々1メッセージ重複)に対して過剰なため不採用"
+  - name: "PID 生存確認ベースの stale 判定を継続"
+    reason_rejected: "active/standby はマルチホストであり、他ホストの PID を判定できない。renewed_at + ttl 方式が必須のため不採用"

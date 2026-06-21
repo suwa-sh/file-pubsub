@@ -1,0 +1,35 @@
+# file-pubsub HA 設定サンプル — 方式A (外部クラスタ委譲、Pacemaker/keepalived)。
+# 配置: /etc/file-pubsub/config.yaml (全ホストで同一内容)。
+# 唯一性は外部クラスタの fencing が保証する。file-pubsub は常に active として強制起動し、
+# standby polling は行わない (起動・停止はクラスタが VIP と同一リソースグループで制御する)。
+polling_interval: 30
+archive_retention: 30
+retry_max_count: 3
+metrics_port: 9090
+data_dir: /mnt/file-pubsub/data
+
+# 冗長構成: 方式A (外部クラスタ委譲)。
+high_availability:
+  uniqueness_method: external_cluster
+  # lease は観測用に記録されるが、昇格契機は外部クラスタ。lease_ttl は heartbeat 記録の目安。
+  lease_ttl: 90
+  heartbeat_interval: 30
+
+topics:
+  # push 受信 (inbox) の例。Producer は VIP 宛に put する。VIP と serve を同一リソース
+  # グループで束ねることで「serve が居ないノードに VIP が付く」窓を避ける。
+  - name: receipts
+    description: push receive (inbox) via VIP, managed by external cluster
+    source:
+      type: inbox
+      directory: /mnt/file-pubsub/inbox/receipts # VIP の付くノードがマウントする受信ディレクトリ
+      completion:
+        mode: marker
+        suffix: .done
+      # fsnotify は NFS で効かないためフォールバックポーリング前提。
+      fallback_poll_interval: 30
+      exclude_patterns:
+        - ".*"
+    subscriptions:
+      - name: current
+        directory: /mnt/file-pubsub/data/subscriptions/receipts/current

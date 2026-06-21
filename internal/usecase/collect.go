@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,13 @@ func (p *Pipeline) resumeArchiving() {
 	for _, m := range manifests {
 		if m.Status != domain.StatusCollected {
 			continue
+		}
+		// メッセージ境界 lease 確認: 中断アーカイブ昇格 (Archive 昇格 / Manifest 記録) も
+		// 永続化点であり、再開前に lease 保持を再確認する。失っていればこのメッセージで
+		// 停止し以降を処理しない (split-brain の被害を高々 1 メッセージに限定、fix B)。
+		if err := p.ensureLease(); err != nil {
+			p.emitLeaseStop(m.MessageID, m.Topic, "resume archiving")
+			return
 		}
 		if _, err := os.Stat(p.Archive.WorkPath(m.Topic, m.MessageID)); err == nil {
 			if err := p.Archive.Promote(m.Topic, m.MessageID); err != nil {
@@ -132,6 +140,10 @@ func (p *Pipeline) collectByStability(ctx context.Context, t *config.Topic, conn
 			continue
 		}
 		if err := p.collectFile(ctx, t, conn, fetchDir, f); err != nil {
+			if errors.Is(err, errLeaseLost) {
+				p.emitLeaseStop("", t.Name, "collect")
+				return // lease 喪失: このメッセージで停止し以降のファイルを収集しない
+			}
 			p.emit(logging.Event{Topic: t.Name, EventType: "collect_failed", ErrorDetail: fmt.Sprintf("collect %q: %v. retried on the next polling cycle", f.Name, err)})
 			continue
 		}
@@ -171,6 +183,10 @@ func (p *Pipeline) collectByCompletion(ctx context.Context, t *config.Topic, con
 			continue
 		}
 		if err := p.collectFile(ctx, t, conn, fetchDir, f, companions...); err != nil {
+			if errors.Is(err, errLeaseLost) {
+				p.emitLeaseStop("", t.Name, "collect")
+				return // lease 喪失: このメッセージで停止し以降のファイルを収集しない
+			}
 			p.emit(logging.Event{Topic: t.Name, EventType: "collect_failed", ErrorDetail: fmt.Sprintf("collect %q: %v. retried on the next polling cycle", f.Name, err)})
 			continue
 		}
@@ -267,6 +283,11 @@ func (p *Pipeline) uniqueMessageID(base string) string {
 // companions は marker 方式のマーカーなど、本体と同じ扱い (回収=削除 / 残す=処理済み記録) で後始末する
 // 付随ファイル (LR-305)。原本・付随の処理はいずれも Archive 保存成功後にのみ行う (LR-303)。
 func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source.Connector, fetchDir string, f source.FileInfo, companions ...source.FileInfo) error {
+	// メッセージ境界 lease 確認: 収集 (pull) / Archive 保存 / Manifest 記録に入る前に
+	// lease 保持を確認する。失っていればこのメッセージで停止し以降を処理しない。
+	if err := p.ensureLease(); err != nil {
+		return err
+	}
 	name := f.Name
 	now := p.now()
 	msg := domain.Message{
@@ -307,6 +328,13 @@ func (p *Pipeline) collectFile(ctx context.Context, t *config.Topic, conn source
 		return nil
 	}
 
+	// メッセージ境界 lease 確認: Archive/Manifest 確定後・原本の副作用 (原本 delete /
+	// 処理済み MarkProcessed) の前にも lease 保持を確認する。失っていればこのメッセージの
+	// 副作用を行わず停止する。Archive は durable のため、原本を残しても次サイクルで再収集
+	// される (at-least-once、高々 1 メッセージの重複)。
+	if err := p.ensureLease(); err != nil {
+		return err
+	}
 	// 原本の処理はアーカイブ保存が成功した後にのみ行う (LR-303)。本体と付随ファイル (marker) を同じ扱いで後始末する。
 	p.handleOriginals(ctx, conn, t, m, append([]source.FileInfo{f}, companions...))
 	if p.Metrics != nil {
@@ -337,18 +365,31 @@ func (p *Pipeline) handleOriginals(ctx context.Context, conn source.Connector, t
 // 保持期限を記録する。以降は何も削除しない: ここから先はアーカイブが
 // 正本となる (SP-001)。
 func (p *Pipeline) finalizeArchive(m *store.Manifest) error {
-	if err := domain.ValidateTransition(m.Status, domain.StatusArchived); err != nil {
+	// collected → archived の遷移をロック保持下の Update 経由で冪等に記録する (lock 外 Put 排除)。
+	// 他 active / クラッシュ再開で既に archived 以降へ進んでいれば no-op (二重昇格・archived
+	// イベント重複を避ける)。
+	updated, err := p.Manifests.Update(m.MessageID, func(base *store.Manifest) error {
+		if base.Status != domain.StatusCollected {
+			return store.ErrSkipManifestUpdate // 既に昇格済み: 冪等 no-op
+		}
+		if err := domain.ValidateTransition(base.Status, domain.StatusArchived); err != nil {
+			return err
+		}
+		saved := p.now()
+		deadline := domain.RetentionDeadline(saved, p.Cfg.ArchiveRetention)
+		base.Status = domain.StatusArchived
+		base.ArchivePath = archiveRelPath(base.Topic, base.MessageID)
+		base.SavedAt = &saved
+		base.RetentionDeadline = &deadline
+		base.AppendEvent(store.DeliveryEvent{At: saved, EventType: "archived"})
+		return nil
+	})
+	if err != nil {
 		return err
 	}
-	saved := p.now()
-	deadline := domain.RetentionDeadline(saved, p.Cfg.ArchiveRetention)
-	m.Status = domain.StatusArchived
-	m.ArchivePath = archiveRelPath(m.Topic, m.MessageID)
-	m.SavedAt = &saved
-	m.RetentionDeadline = &deadline
-	m.AppendEvent(store.DeliveryEvent{At: saved, EventType: "archived"})
-	if err := p.Manifests.Put(m); err != nil {
-		return err
+	// in-memory m を最新化 (呼び出し側が後続で参照するため)。
+	if updated != nil {
+		*m = *updated
 	}
 	p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, EventType: "archived"})
 	return nil

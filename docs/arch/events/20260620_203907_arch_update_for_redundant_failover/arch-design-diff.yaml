@@ -1,0 +1,179 @@
+meta:
+  event_id: "20260620_203907_arch_update_for_redundant_failover"
+  trigger_event: "rdra:20260620_171535_add_redundant_failover, nfr:20260620_194114_nfr_redundant_failover"
+  created_at: "2026-06-20T20:39:07"
+
+technology_context:
+  constraints:
+    - "シングルバイナリ配布(追加ランタイム不要)"
+    - "active/standby 冗長構成(VIP + 共有 data_dir。lease 自動奪取 or 外部クラスタ委譲で唯一性を保証)"
+    - "外部 DB を使わない(ローカル/共有ファイルシステムのみ。共有 data_dir は NFSv4 推奨)"
+    - "オンプレ単一サイト 2 ノード(active/standby)+ Docker(Windows 開発 PC は docker compose で動作確認)"
+    - "Producer・Consumer 無改修(Consumer は従来手段でファイル GET)"
+    - "NTP による時刻同期前提(lease の renewed_at + ttl による stale 判定がノード間時刻に依存)"
+
+system_architecture:
+  cross_tier_policies:
+    - id: "CTP-006"
+      name: "active/standby 冗長化(lease 自動奪取 / 外部クラスタ委譲)"
+      description: "単一インスタンス前提を改め、VIP + 共有 data_dir(NFSv4 推奨)の active/standby 2 ノードで運用する。serve プロセスは常に 1 つ(single-writer)で、唯一性保証は二方式併用・同一バイナリ: 方式B(lease 自動奪取。file-pubsub 単体で lease の renewed_at + ttl 失効を検知し standby が自動昇格)/ 方式A(外部クラスタ委譲。Pacemaker/keepalived 等の fencing が serve リソースの起動/停止を制御し、VIP + serve を同一リソースグループで束ねる。file-pubsub は TTL 失効による自動奪取を行わず外部クラスタに委ねる)。設定で切替・併用できる。lease レコードは hostname/boot-id/acquired_at/renewed_at/ttl を持ち、active が heartbeat で renewed_at を更新する。重い分散合意機構(Raft/Paxos 等)は導入せず軽量シングルバイナリを維持する。ネットワーク機器・ストレージ・電源のインフラ層冗長化は本体スコープ外で導入先サーバ/サイトに委譲する(共有 data_dir のストレージ冗長性も導入先委譲)"
+      reason: "ユーザー指定(REQ-018/SPEC-018-01): 単一インスタンス前提を active/standby 冗長化前提へ更新。NFR A.2.1.1 サーバ内冗長化(Lv4 完全冗長化・自動切替)・A.1.2.1 サービス切替時間(Lv4 自動フェイルオーバー)・A.4.1.2 RTO(Lv4 10分以内)・A.4.1.3 RLO(Lv3 平常時同等水準で復旧)への対応。A.2.3.1 ネットワーク機器冗長化(Lv1)・A.2.5.1 ストレージ冗長化(Lv0)・A.2.6.2 電源冗長化(Lv1)はインフラ層として導入先サーバ/サイトに委譲"
+      source_model: "バリエーション: 唯一性保証方式 / 外部システム: 外部クラスタ / 情報: Lock / 情報: 設定 / 条件: 二重起動防止 / NFR A.2.1.1, NFR A.1.2.1, NFR A.4.1.2, NFR A.4.1.3, NFR A.2.3.1, NFR A.2.5.1, NFR A.2.6.2"
+      confidence: "user"
+    - id: "CTP-010"
+      name: "split-brain 被害の限定(冪等 I/O + メッセージ境界 lease 確認)"
+      description: "自動フェイルオーバー時に active が 2 つ存在しうる窓(split-brain)でも被害をデータ喪失・破損なし・高々 1 メッセージの重複配信に限定する。(1) Subscription 配置・Manifest 更新は AtomicWrite(一時名 + rename)で正式名に途中状態を露出しない、(2) 冪等照合 I/O(Manifest.Exists / Processed.IsProcessed / message_id 採番)は fail-closed で安全側に倒す、(3) メッセージ境界で lease 保持を確認し、(4) Manifest は read-merge-write で配送記録の取りこぼしを防ぐ。これにより split-brain でも at-least-once 冪等再開の許容範囲(高々 1 メッセージ重複)に被害を収める。重い分散ロック/合意は導入しない"
+      reason: "ユーザー指定(REQ-016/SPEC-016-01): split-brain 被害を高々 1 メッセージ重複に限定。NFR A.4.1.1 RPO(Lv4 データ損失なし)維持・C.3.3.1 障害復旧方式(standby 自動昇格で配信継続)への対応"
+      source_model: "条件: 二重配信防止 / 条件: AtomicWrite配置 / 条件: message_id採番 / 情報: Manifest / 情報: 処理済み管理 / NFR A.4.1.1, NFR C.3.3.1"
+      confidence: "user"
+  cross_tier_rules:
+    - id: "CTR-004"
+      name: "single-writer は lease 保持者(active)のみ"
+      description: "data_dir(archive / subscriptions / manifest / lock / dlq / processed)への書き込みは lease を保持する active な serve のみが行う。standby は lease を保持せず書き込まない。status は読み取り専用で lease 不要。pull 型収集(sftp/ftp/local)も lease 保持者だけが pull/archive し二重収集しない。push(put)受信ディレクトリ取り込みは active な serve(方式A では VIP と同居)が行う"
+      reason: "情報「Lock」を lease レコード化し active/standby でも single-writer を維持するため。NFR A.2.1.1 への対応"
+      source_model: "情報: Lock / 情報: 設定 / 外部システム: リモートファイル領域 / 外部システム: 受信ディレクトリ / 外部システム: 外部クラスタ / 条件: 二重起動防止 / NFR A.2.1.1"
+      confidence: "user"
+  diagram_mermaid: |
+    graph TD
+      PROD["Producerシステム(無改修)"] -->|"ファイル出力"| REMOTE["リモートファイル領域(FTP/SFTP/SCP)"]
+      VIP["VIP(active/standby)"] --> ACT["serve active (lease保持)"]
+      ACT -.->|"lease失効で昇格 / 外部クラスタfencing"| STBY["serve standby (待機)"]
+      CLUSTER["外部クラスタ(Pacemaker/keepalived・方式A)"] -.->|"fencing・VIP+serveを同一リソースグループ"| VIP
+      REMOTE -->|"Collect(lease保持者のみpull・安定待ち)"| ACT
+      ACT -->|"配信前に必ず保存"| ARCH[("共有 data_dir(NFSv4): archive/{topic}/")]
+      ARCH -->|"Fan-out(AtomicWrite)"| SUBS[("subscriptions/{current,next,test}/")]
+      SUBS -->|"従来手段でGET"| CCUR["Consumerシステム(Current)"]
+      SUBS -->|"従来手段でGET"| CNXT["Consumerシステム(Next)"]
+      ACT -->|"配送記録(read-merge-write)"| MAN[("Manifest/DLQ/Lock(lease)/処理済み管理")]
+      ACT -->|"/metrics・/healthz"| MON["監視基盤(Prometheus/Grafana等)"]
+      CLI["tier-ops-cli 運用 CLI(serve/status/replay/設定検証)"] -->|"照会(読み取り専用)"| MAN
+      CLI -->|"Replay読出"| ARCH
+      OPS["配信基盤運用者"] --> CLI
+
+data_architecture:
+  entities:
+    - id: "E-001"
+      name: "設定"
+      source_info: "情報: 設定"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "polling_interval"
+          type: "integer"
+          description: "ポーリング間隔(秒)"
+          nullable: false
+          primary_key: false
+        - name: "archive_retention"
+          type: "integer"
+          description: "Archive 保持期間(retention、日数)"
+          nullable: false
+          primary_key: false
+        - name: "retry_max_count"
+          type: "integer"
+          description: "リトライ上限回数"
+          nullable: false
+          primary_key: false
+        - name: "metrics_port"
+          type: "integer"
+          description: "メトリクス公開用 HTTP ポート"
+          nullable: false
+          primary_key: false
+        - name: "topic_definitions"
+          type: "text"
+          description: "Topic 定義一覧"
+          nullable: false
+          primary_key: false
+        - name: "subscription_definitions"
+          type: "text"
+          description: "Subscription 定義一覧"
+          nullable: false
+          primary_key: false
+        - name: "source_definitions"
+          type: "text"
+          description: "収集ソース定義一覧"
+          nullable: false
+          primary_key: false
+        - name: "credential_refs"
+          type: "text"
+          description: "認証情報参照(環境変数参照/鍵ファイルパス)"
+          nullable: true
+          primary_key: false
+        - name: "uniqueness_method"
+          type: "string"
+          description: "唯一性保証方式(方式A=外部クラスタ委譲 / 方式B=lease 自動奪取)。active/standby 冗長化での single-writer 維持方式"
+          nullable: false
+          primary_key: false
+        - name: "lease_ttl"
+          type: "integer"
+          description: "lease TTL(秒)。方式B での stale 判定境界。NFS 属性キャッシュ最大(actimeo 既定 60s)より十分大きく設定でき既定も大きく取る"
+          nullable: true
+          primary_key: false
+        - name: "heartbeat_interval"
+          type: "integer"
+          description: "heartbeat 間隔(秒)。active が lease の renewed_at を更新する周期(方式B)"
+          nullable: true
+          primary_key: false
+        - name: "fallback_polling_interval"
+          type: "integer"
+          description: "フォールバックポーリング間隔(秒)。NFS 等で fsnotify が効かない受信ディレクトリ取り込みの保険"
+          nullable: true
+          primary_key: false
+      relationships:
+        - target_entity: "E-002"
+          type: "1:N"
+          description: "設定が複数の Topic を定義する"
+        - target_entity: "E-003"
+          type: "1:N"
+          description: "設定が複数の Subscription を定義する"
+        - target_entity: "E-004"
+          type: "1:N"
+          description: "設定が複数の収集ソースを定義する"
+        - target_entity: "E-005"
+          type: "1:N"
+          description: "設定が認証情報を参照する"
+        - target_entity: "E-011"
+          type: "1:1"
+          description: "設定が唯一性保証方式・lease TTL・heartbeat 間隔で Lock(lease)の挙動を規定する"
+    - id: "E-011"
+      name: "Lock"
+      source_info: "情報: Lock"
+      model_type: "resource_mutable"
+      attributes:
+        - name: "lock_holder_process_info"
+          type: "string"
+          description: "lease 保持プロセス情報"
+          nullable: false
+          primary_key: false
+        - name: "hostname"
+          type: "string"
+          description: "lease 保持ノードのホスト名(マルチホスト識別)"
+          nullable: false
+          primary_key: false
+        - name: "boot_id"
+          type: "string"
+          description: "起動世代識別子(boot-id)。同一ホストの再起動を区別する"
+          nullable: false
+          primary_key: false
+        - name: "acquired_at"
+          type: "datetime"
+          description: "lease 取得日時"
+          nullable: false
+          primary_key: false
+        - name: "renewed_at"
+          type: "datetime"
+          description: "lease 更新日時。active が heartbeat で更新する。stale 判定(renewed_at + ttl 超過)の基準"
+          nullable: false
+          primary_key: false
+        - name: "ttl"
+          type: "integer"
+          description: "lease 有効期間(秒)。renewed_at + ttl 超過で stale と判定し standby が奪取できる"
+          nullable: false
+          primary_key: false
+      relationships:
+        - target_entity: "E-001"
+          type: "N:1"
+          description: "Lock(lease)の TTL・heartbeat・唯一性保証方式は設定で規定される"
+  storage_mapping:
+    - entity_id: "E-011"
+      storage_type: "file"
+      reason: "共有 data_dir(NFSv4 推奨)上の lease ファイル(hostname/boot-id/acquired_at/renewed_at/ttl)。renewed_at + ttl 超過で stale 判定し active/standby の single-writer を維持する。PID 生存確認に依存せずマルチホストで判定できる"
+      confidence: "user"

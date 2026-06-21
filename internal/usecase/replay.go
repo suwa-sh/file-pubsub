@@ -119,10 +119,14 @@ func (p *Pipeline) Replay(ctx context.Context, params ReplayParams) (int, error)
 			return count, fmt.Errorf("replay placement for message %q failed: %v. check the subscription directory path and permissions", m.MessageID, err)
 		}
 		now := p.now()
-		m.SetSubscriptionState(params.Subscription, domain.SubscriptionDelivered, &now, "")
-		m.AppendReplay(store.ReplayRecord{ReplayedAt: now, TargetSubscriptions: []string{params.Subscription}, Result: "success"})
-		m.AppendEvent(store.DeliveryEvent{At: now, Subscription: params.Subscription, EventType: "replayed"})
-		if err := p.Manifests.Put(m); err != nil {
+		// 既存 manifest への replay 記録もロック保持下の Update 経由に統一する (lock 外 Put 排除)。
+		// replay は明示的な再配信のため SetSubscriptionState で delivered を直接記録する。
+		if _, err := p.Manifests.Update(m.MessageID, func(base *store.Manifest) error {
+			base.SetSubscriptionState(params.Subscription, domain.SubscriptionDelivered, &now, "")
+			base.AppendReplay(store.ReplayRecord{ReplayedAt: now, TargetSubscriptions: []string{params.Subscription}, Result: "success"})
+			base.AppendEvent(store.DeliveryEvent{At: now, Subscription: params.Subscription, EventType: "replayed"})
+			return nil
+		}); err != nil {
 			return count, fmt.Errorf("manifest update for message %q failed: %v. the placed file is valid; re-run replay to record it", m.MessageID, err)
 		}
 		p.emit(logging.Event{MessageID: m.MessageID, Topic: m.Topic, Subscription: params.Subscription, EventType: "replayed"})

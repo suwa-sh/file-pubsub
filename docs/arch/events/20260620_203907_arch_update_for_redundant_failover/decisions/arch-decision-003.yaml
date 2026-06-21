@@ -1,0 +1,30 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "architecture"
+artifact_id: "arch-decision-003"
+title: "レイヤリング: runtime/usecase/domain/gateway の 4 層直接依存、IF は収集コネクタのみ"
+status: "approved"
+generated_at: "2026-06-12T15:48:33"
+context: |
+  新規構築であり、開発スピードとコードの追いやすさを優先したい。
+  一方で収集ソース(FTP / SFTP / SCP / ローカルディレクトリ)は Topic ごとに切り替え可能で、
+  後段(Archive / Fan-out / Manifest)をソース種別に依存させないという要件(RDRA 情報: 収集ソース)がある。
+decision: |
+  tier-daemon-worker を runtime / usecase / domain / gateway の 4 層に分け、レイヤー間は直接依存(IF レス)とする。
+  インターフェースを導入するのは差し替え要件が明確な収集コネクタ(gateway 層内の local/FTP/SFTP/SCP)のみ。
+  domain 層は I/O を持たず、状態遷移・採番・安定判定・冪等判定の純粋ロジックに限定する。
+  tier-ops-cli はコマンド層 1 層のみとし、usecase/domain/gateway は daemon ティアのパッケージを共有する。
+  変動点が収集プロトコルに限定されるため、それ以外の疎結合化は過剰と判断した。
+consequences:
+  positive:
+    - "レイヤー数・抽象の階層が少なくコードが追いやすい(新規構築の開発スピード優先)"
+    - "収集コネクタだけは共通 IF で差し替え可能なため、後段をソース種別非依存に保てる"
+    - "domain 層が I/O レスのため配送判定ロジックの単体テストが容易"
+  negative:
+    - "ファイルストア等を将来差し替える場合(例: S3 互換ストレージ対応)はその時点で IF 導入のリファクタリングが必要"
+    - "直接依存のためレイヤー責務違反をコンパイラで強制できず、レビュー・規約で守る必要がある"
+alternatives_considered:
+  - name: "フルヘキサゴナル(全ポート・アダプタ IF 化)"
+    reason_rejected: "新規構築の単機能ブリッジに対して抽象が過剰で、コード量と学習コストが増えるだけのため不採用。前提(乗り換えなし)が崩れた箇所から凹型で IF を導入する"
+  - name: "レイヤリングなし(フラット構成)"
+    reason_rejected: "配送状態遷移・冪等判定などのコアロジックが I/O と混ざりテスト困難になるため不採用"

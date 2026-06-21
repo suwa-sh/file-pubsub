@@ -2,19 +2,19 @@
 
 > FTP GET/DELETE 型のレガシーファイル IF を、Producer を変更せずに Pub/Sub 風の配信モデル(Topic / Subscription / Archive / Fan-out / Manifest)へ変換する軽量ブリッジ
 
-**最終更新**: 2026-06-17 12:13:32 harden idempotency (specs)
+**最終更新**: 2026-06-20 22:22:15 arch refine failover atomicity (arch)
 
 ## 成果物一覧
 
 | ドメイン | 最新 | イベント数 |
 |---------|------|-----------:|
-| [USDM（要求分解）](#usdm要求分解) | [usdm/latest/](usdm/latest/) | 4 |
-| [RDRA（要件定義）](#rdra要件定義) | [rdra/latest/](rdra/latest/) | 4 |
-| [NFR（非機能要求）](#nfr非機能要求) | [nfr/latest/](nfr/latest/) | 1 |
-| [Arch（アーキテクチャ）](#archアーキテクチャ) | [arch/latest/](arch/latest/) | 1 |
+| [USDM（要求分解）](#usdm要求分解) | [usdm/latest/](usdm/latest/) | 5 |
+| [RDRA（要件定義）](#rdra要件定義) | [rdra/latest/](rdra/latest/) | 5 |
+| [NFR（非機能要求）](#nfr非機能要求) | [nfr/latest/](nfr/latest/) | 2 |
+| [Arch（アーキテクチャ）](#archアーキテクチャ) | [arch/latest/](arch/latest/) | 4 |
 | [Infra（インフラ設計）](#infraインフラ設計) | - | 0 |
 | [Design（デザイン）](#designデザイン) | - | 0 |
-| [Specs（詳細仕様）](#specs詳細仕様) | [specs/latest/](specs/latest/) | 4 |
+| [Specs（詳細仕様）](#specs詳細仕様) | [specs/latest/](specs/latest/) | 5 |
 
 ## USDM（要求分解）
 
@@ -25,8 +25,8 @@
 
 | 項目 | 値 |
 |------|-----|
-| 要求数 | 14 |
-| 仕様数 | 31 |
+| 要求数 | 18 |
+| 仕様数 | 38 |
 
 ## RDRA（要件定義）
 
@@ -46,11 +46,11 @@
 | 項目 | 値 |
 |------|-----|
 | アクター | 2 |
-| 外部システム | 6 |
+| 外部システム | 7 |
 | 情報 | 13 |
 | 状態モデル | 5 |
 | 条件 | 13 |
-| バリエーション | 9 |
+| バリエーション | 10 |
 | 業務 | 2 |
 | BUC | 5 |
 | UC | 19 |
@@ -75,6 +75,7 @@ graph TB
   SYS --> Consumerシステム_Current_(["Consumerシステム Current "]):::external
   SYS --> Consumerシステム_Next_(["Consumerシステム Next "]):::external
   SYS --> 監視基盤(["監視基盤"]):::external
+  SYS --> 外部クラスタ(["外部クラスタ"]):::external
   classDef actor fill:#2563EB,color:#fff,stroke:none
   classDef external fill:#6B7280,color:#fff,stroke:none
 ```
@@ -113,14 +114,18 @@ graph TB
 ```mermaid
 graph TD
 PROD["Producerシステム(無改修)"] -->|"ファイル出力"| REMOTE["リモートファイル領域(FTP/SFTP/SCP)"]
-REMOTE -->|"Collect(安定待ち・GET後DELETE/copy)"| DAEMON["tier-daemon-worker 常駐デーモン"]
-DAEMON -->|"配信前に必ず保存"| ARCH[("archive/{topic}/")]
+VIP["VIP(active/standby)"] --> ACT["serve active (lease保持)"]
+STBY["serve standby (待機・方式B)"] -.->|"方式B: lease失効(renewed_at+ttl超過)を検知し奪取して昇格"| ACT
+CLUSTER["外部クラスタ(Pacemaker/keepalived・方式A)"] -.->|"方式A: serveリソースを起動/停止(fencing・VIP+serveを同一リソースグループ)"| ACT
+CLUSTER -.->|"fencing・VIP制御"| VIP
+REMOTE -->|"Collect(lease保持者のみpull・安定待ち)"| ACT
+ACT -->|"配信前に必ず保存"| ARCH[("共有 data_dir(NFSv4): archive/{topic}/")]
 ARCH -->|"Fan-out(AtomicWrite)"| SUBS[("subscriptions/{current,next,test}/")]
 SUBS -->|"従来手段でGET"| CCUR["Consumerシステム(Current)"]
 SUBS -->|"従来手段でGET"| CNXT["Consumerシステム(Next)"]
-DAEMON -->|"配送記録"| MAN[("Manifest/DLQ/Lock/処理済み管理")]
-DAEMON -->|"/metrics・/healthz"| MON["監視基盤(Prometheus/Grafana等)"]
-CLI["tier-ops-cli 運用 CLI(serve/status/replay/設定検証)"] -->|"照会・再配置"| MAN
+ACT -->|"配送記録(read-merge-write)"| MAN[("Manifest/DLQ/Lock(lease)/処理済み管理")]
+ACT -->|"/metrics・/healthz"| MON["監視基盤(Prometheus/Grafana等)"]
+CLI["tier-ops-cli 運用 CLI(serve/status/replay/設定検証)"] -->|"照会(読み取り専用)"| MAN
 CLI -->|"Replay読出"| ARCH
 OPS["配信基盤運用者"] --> CLI
 ```
@@ -226,14 +231,19 @@ SUC --> SGW["共有 gateway 層"]
 | 2 | Arch | [実行モデル: 単一バイナリ 2 ティア(常駐デーモン + 運用 CLI)](arch/events/20260612_154833_arch_initial_build/decisions/arch-decision-002.yaml) | approved |
 | 3 | Arch | [レイヤリング: runtime/usecase/domain/gateway の 4 層直接依存、IF は収集コネクタのみ](arch/events/20260612_154833_arch_initial_build/decisions/arch-decision-003.yaml) | approved |
 | 4 | Arch | [観測戦略: Prometheus pull 型(/metrics + /healthz)、しきい値判定は外部監視基盤の責務](arch/events/20260612_154833_arch_initial_build/decisions/arch-decision-004.yaml) | approved |
-| 5 | Specs | [API スタイル選定: HTTP API は観測専用 2 エンドポイント(Prometheus pull)のみとし、REST CRUD API を設けない](specs/events/20260612_160204_spec_generation/decisions/spec-decision-001.yaml) | approved |
-| 6 | Specs | [非同期境界: メッセージング基盤(MQ)を使わず、ディレクトリ + Manifest によるファイルベース Pub/Sub を採用する](specs/events/20260612_160204_spec_generation/decisions/spec-decision-002.yaml) | approved |
-| 7 | Specs | [データ永続化: RDB 正規化をせず、ファイルレイアウト + メッセージ別 JSON Manifest を採用する](specs/events/20260612_160204_spec_generation/decisions/spec-decision-003.yaml) | approved |
-| 8 | Specs | [push 受信モードの選定: source.type に独立値 inbox を追加し、既存 local を拡張しない](specs/events/20260617_020637_spec_generation/decisions/spec-decision-004.yaml) | approved |
-| 9 | Specs | [push 受信モードの取り込みトリガー: fsnotify イベント駆動 + 低頻度フォールバックポーリングのハイブリッド](specs/events/20260617_020637_spec_generation/decisions/spec-decision-005.yaml) | approved |
-| 10 | Specs | [完了検知方式を設定で選択(安定判定 / rename / done マーカー)し、既定は安定判定とする](specs/events/20260617_020637_spec_generation/decisions/spec-decision-006.yaml) | approved |
-| 11 | Specs | [completion を {mode, suffix} のネスト構造にし、rename/marker のサフィックスを設定可能にする](specs/events/20260617_081425_configurable_completion_suffix/decisions/spec-decision-007.yaml) | approved |
-| 12 | Specs | [message_id の同一秒衝突を連番付与で回避し、marker+copy の残存マーカーは新契機にしない](specs/events/20260617_121332_harden_idempotency/decisions/spec-decision-008.yaml) | approved |
+| 5 | Arch | [唯一性保証の二方式併用(方式B lease 自動奪取 + 方式A 外部クラスタ fencing 委譲)を同一バイナリで提供](arch/events/20260620_203907_arch_update_for_redundant_failover/decisions/arch-decision-005.yaml) | approved |
+| 6 | Arch | [split-brain 被害を冪等 I/O + メッセージ境界 lease 確認で高々1メッセージ重複に限定し、重い分散ロックを持たない](arch/events/20260620_203907_arch_update_for_redundant_failover/decisions/arch-decision-006.yaml) | approved |
+| 7 | Specs | [API スタイル選定: HTTP API は観測専用 2 エンドポイント(Prometheus pull)のみとし、REST CRUD API を設けない](specs/events/20260612_160204_spec_generation/decisions/spec-decision-001.yaml) | approved |
+| 8 | Specs | [非同期境界: メッセージング基盤(MQ)を使わず、ディレクトリ + Manifest によるファイルベース Pub/Sub を採用する](specs/events/20260612_160204_spec_generation/decisions/spec-decision-002.yaml) | approved |
+| 9 | Specs | [データ永続化: RDB 正規化をせず、ファイルレイアウト + メッセージ別 JSON Manifest を採用する](specs/events/20260612_160204_spec_generation/decisions/spec-decision-003.yaml) | approved |
+| 10 | Specs | [push 受信モードの選定: source.type に独立値 inbox を追加し、既存 local を拡張しない](specs/events/20260617_020637_spec_generation/decisions/spec-decision-004.yaml) | approved |
+| 11 | Specs | [push 受信モードの取り込みトリガー: fsnotify イベント駆動 + 低頻度フォールバックポーリングのハイブリッド](specs/events/20260617_020637_spec_generation/decisions/spec-decision-005.yaml) | approved |
+| 12 | Specs | [完了検知方式を設定で選択(安定判定 / rename / done マーカー)し、既定は安定判定とする](specs/events/20260617_020637_spec_generation/decisions/spec-decision-006.yaml) | approved |
+| 13 | Specs | [completion を {mode, suffix} のネスト構造にし、rename/marker のサフィックスを設定可能にする](specs/events/20260617_081425_configurable_completion_suffix/decisions/spec-decision-007.yaml) | approved |
+| 14 | Specs | [message_id の同一秒衝突を連番付与で回避し、marker+copy の残存マーカーは新契機にしない](specs/events/20260617_121332_harden_idempotency/decisions/spec-decision-008.yaml) | approved |
+| 15 | Specs | [唯一性保証を方式B(lease 自動奪取)と方式A(外部クラスタ委譲/fencing)の二方式併用とし、同一バイナリで両環境をカバーする](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-009.yaml) | approved |
+| 16 | Specs | [lease 方式の split-brain 被害を、既存の冪等 I/O(AtomicWrite + at-least-once 冪等再開 + fail-closed 照合)で受動的に限定する(被害なし=破損・喪失なし。上限「高々1メッセージ」の能動担保は spec-decision-011)](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-010.yaml) | approved |
+| 17 | Specs | [split-brain の重複上限「高々1メッセージ」(REQ-016)を、message_id ロック + 世代 CAS + read-merge-write とメッセージ境界 lease 確認で実装担保する(案Z)](specs/events/20260620_171535_add_redundant_failover/decisions/spec-decision-011.yaml) | approved |
 
 ## イベント履歴
 
@@ -253,6 +263,13 @@ SUC --> SGW["共有 gateway 層"]
 | 2026-06-17 12:13:32 | USDM（要求分解） | [20260617_121332_harden_idempotency](usdm/events/20260617_121332_harden_idempotency) |
 | 2026-06-17 12:13:32 | RDRA（要件定義） | [20260617_121332_harden_idempotency](rdra/events/20260617_121332_harden_idempotency) |
 | 2026-06-17 12:13:32 | Specs（詳細仕様） | [20260617_121332_harden_idempotency](specs/events/20260617_121332_harden_idempotency) |
+| 2026-06-20 17:15:35 | USDM（要求分解） | [20260620_171535_add_redundant_failover](usdm/events/20260620_171535_add_redundant_failover) |
+| 2026-06-20 17:15:35 | RDRA（要件定義） | [20260620_171535_add_redundant_failover](rdra/events/20260620_171535_add_redundant_failover) |
+| 2026-06-20 17:15:35 | Specs（詳細仕様） | [20260620_171535_add_redundant_failover](specs/events/20260620_171535_add_redundant_failover) |
+| 2026-06-20 19:41:14 | NFR（非機能要求） | [20260620_194114_nfr_redundant_failover](nfr/events/20260620_194114_nfr_redundant_failover) |
+| 2026-06-20 20:39:07 | Arch（アーキテクチャ） | [20260620_203907_arch_update_for_redundant_failover](arch/events/20260620_203907_arch_update_for_redundant_failover) |
+| 2026-06-20 21:36:04 | Arch（アーキテクチャ） | [20260620_213604_arch_refine_redundant_failover](arch/events/20260620_213604_arch_refine_redundant_failover) |
+| 2026-06-20 22:22:15 | Arch（アーキテクチャ） | [20260620_222215_arch_refine_failover_atomicity](arch/events/20260620_222215_arch_refine_failover_atomicity) |
 
 ---
 

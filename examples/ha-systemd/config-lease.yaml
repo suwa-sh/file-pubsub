@@ -1,0 +1,41 @@
+# file-pubsub HA 設定サンプル — 方式B (lease 自動奪取、file-pubsub 単体)。
+# 配置: /etc/file-pubsub/config.yaml (全ホストで同一内容)。
+# data_dir は全ホストで同一の NFSv4 共有をマウントしたパスにする。
+polling_interval: 30
+archive_retention: 30
+retry_max_count: 3
+metrics_port: 9090
+# 全ホストで同一 NFS 共有をマウントしたパス (file-pubsub.service の RequiresMountsFor と合わせる)。
+data_dir: /mnt/file-pubsub/data
+
+# 冗長構成: 方式B (lease 自動奪取)。
+high_availability:
+  uniqueness_method: lease
+  # NFS の属性キャッシュ (actimeo、既定最大 60s) より十分大きく取る (推奨 90 以上)。
+  lease_ttl: 90
+  # 既定は lease_ttl/3。明示する場合は lease_ttl 未満にする。
+  heartbeat_interval: 30
+
+topics:
+  # pull 型 (sftp) の例。どのホストが active でも同じ収集元から引くため VIP は不要。
+  - name: orders
+    description: SFTP source (HA, lease holder collects)
+    source:
+      type: sftp
+      host: sftp.example.internal
+      port: 22
+      directory: /out
+      auth:
+        username: producer
+        password: ${SFTP_PASSWORD}
+      stability_check:
+        interval: 5
+      exclude_patterns:
+        - "*.tmp"
+        - "*.part"
+    subscriptions:
+      # 配送先も NFS 共有上 (data_dir 配下) に置くと、どのホストが active でも同じ場所に配信される。
+      - name: current
+        directory: /mnt/file-pubsub/data/subscriptions/orders/current
+      - name: next
+        directory: /mnt/file-pubsub/data/subscriptions/orders/next

@@ -2,6 +2,14 @@
 # 配置: /etc/systemd/system/file-pubsub.service
 # 前提: バイナリ /usr/local/bin/file-pubsub、設定 /etc/file-pubsub/config.yaml、
 #       データディレクトリ /var/lib/file-pubsub (config.yaml の data_dir に合わせる)
+#
+# 冗長構成 (active/standby 自動フェイルオーバー) について:
+#   この unit は単一インスタンス / 方式B (config の high_availability.uniqueness_method: lease)
+#   の両方でそのまま使えます。方式B では NFS 共有 data_dir を ReadWritePaths に指定し、
+#   各ホストでこの unit を有効化すれば、TTL 失効で standby が自動昇格します。
+#   方式A (external_cluster) では VIP と serve を同一リソースグループで束ねるため、
+#   本 unit を直接 enable せず Pacemaker 等のクラスタリソースとして起動・停止させます
+#   (config は high_availability.uniqueness_method: external_cluster)。詳細は README 参照。
 [Unit]
 Description=file-pubsub - legacy file interface to Pub/Sub-style delivery bridge
 Documentation=https://github.com/suwa-sh/file-pubsub

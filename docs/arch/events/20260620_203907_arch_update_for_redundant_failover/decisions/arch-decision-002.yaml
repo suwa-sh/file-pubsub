@@ -1,0 +1,30 @@
+schema_version: "1.0"
+artifact_type: "decision_record"
+skill_type: "architecture"
+artifact_id: "arch-decision-002"
+title: "実行モデル: 単一バイナリ 2 ティア(常駐デーモン + 運用 CLI)"
+status: "approved"
+generated_at: "2026-06-12T15:48:33"
+context: |
+  Producer はニアリアルタイムでファイルを出力し続けるため、収集〜配信は常時自動実行が必要。
+  一方で運用者は status 照会・Replay・設定検証といった随時の運用操作を行う。
+  配布形態はシングルバイナリ(Linux 主対象)+ Docker イメージで、コンポーネント数は最小にしたい。
+decision: |
+  単一の Go バイナリに 2 ティアを同居させる。
+  tier-daemon-worker(serve サブコマンド)はポーリングサイクル(Collect→Archive→Fan-out→リトライ/DLQ→retention)と
+  組込 HTTP(/metrics・/healthz)を持つ常駐デーモン。
+  tier-ops-cli(status / replay / 設定検証)は同一バイナリのサブコマンドとして usecase 層をパッケージ共有する。
+  ニアリアルタイム性(常駐)と配布の単純さ(1 バイナリ)を両立できることが決め手。
+consequences:
+  positive:
+    - "配布物が 1 つで済み、デーモンと CLI のバージョン不整合が起きない"
+    - "配送ロジック(Manifest 記録・AtomicWrite)を usecase 層共有で二重実装せずに済む"
+    - "ポーリング常駐によりニアリアルタイム配信(秒〜分オーダー)を実現できる"
+  negative:
+    - "CLI 操作と稼働中デーモンが同じファイル群を触るため、Lock・AtomicWrite・Manifest 規約の厳守が前提になる"
+    - "バイナリにデーモン・CLI 両方のコードが含まれサイズがやや大きくなる"
+alternatives_considered:
+  - name: "cron ワンショット実行"
+    reason_rejected: "実行間隔が cron の分解能に縛られニアリアルタイム性が劣る。Lock・graceful shutdown・メトリクス常時公開の実現も複雑になるため不採用"
+  - name: "デーモンと CLI の分離バイナリ"
+    reason_rejected: "配布物が増えバージョン整合の管理が必要になる。レガシー現場への導入の単純さを損なうため不採用"

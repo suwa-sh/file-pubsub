@@ -1,0 +1,6 @@
+spec イベント 20260620_171535_add_redundant_failover への codex 再レビュー(2巡目)の arch 側残指摘を取り込むアーキテクチャ差分更新。
+
+#9 [major] 設定エンティティ(E-001)のフラットな uniqueness_method / lease_ttl / heartbeat_interval を high_availability.* ネスト構造に合わせる(spec の設定キー high_availability.* / ConfigLoader の HighAvailability 型と整合)。
+#10 [minor] Lock エンティティ(E-011)に旧 PID 系 lock_holder_process_info が nullable=false で残っている。lease 化(hostname/boot_id/acquired_at/renewed_at/ttl)に合わせ旧 PID フィールドを削除。単一インスタンス運用(high_availability 省略)では lock ファイルの存在で二重起動を防ぐ点と整合させる。
+
+データモデル(E-001 / E-011)のみの差分。CTP-006/CTP-010/CTR-004・図(system)・decisions は前イベント 20260620_203907 を維持。RDRA の情報「設定」「Lock」に無い要素は新規発明しない(リネーム + 旧フィールド削除のみ)。

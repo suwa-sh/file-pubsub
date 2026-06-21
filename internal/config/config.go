@@ -43,14 +43,33 @@ const (
 	DefaultMarkerSuffix = ".done"
 )
 
+// 唯一性保証方式 (SPEC-015-02, spec-decision-009)。
+// lease=方式B(lease 自動奪取)/ external_cluster=方式A(外部クラスタ委譲)。
+const (
+	UniquenessMethodLease           = "lease"
+	UniquenessMethodExternalCluster = "external_cluster"
+)
+
+// lease TTL の既定値(秒)。NFS の actimeo 既定 60s より十分大きい値 (SPEC-017-01)。
+const DefaultLeaseTTL = 90
+
 // Config は単一 YAML 設定の全体を表す (E-001)。
 type Config struct {
-	PollingInterval  int     `yaml:"polling_interval"`  // 秒
-	ArchiveRetention int     `yaml:"archive_retention"` // 日 (SP-006)
-	RetryMaxCount    int     `yaml:"retry_max_count"`   // SR-004
-	MetricsPort      int     `yaml:"metrics_port"`
-	DataDir          string  `yaml:"data_dir"` // デフォルトは config.yaml のあるディレクトリ
-	Topics           []Topic `yaml:"topics"`
+	PollingInterval  int               `yaml:"polling_interval"`  // 秒
+	ArchiveRetention int               `yaml:"archive_retention"` // 日 (SP-006)
+	RetryMaxCount    int               `yaml:"retry_max_count"`   // SR-004
+	MetricsPort      int               `yaml:"metrics_port"`
+	DataDir          string            `yaml:"data_dir"` // デフォルトは config.yaml のあるディレクトリ
+	Topics           []Topic           `yaml:"topics"`
+	HighAvailability *HighAvailability `yaml:"high_availability"` // nil=ブロック省略=単一インスタンス運用 (SPEC-015-01)
+}
+
+// HighAvailability は冗長化(唯一性保証)設定 (SPEC-015-02)。
+// high_availability ブロックを省略 (nil) すると単一インスタンス運用(後方互換)。
+type HighAvailability struct {
+	UniquenessMethod  string `yaml:"uniqueness_method"`  // lease (既定) / external_cluster
+	LeaseTTL          int    `yaml:"lease_ttl"`          // lease TTL(秒)。既定 90 (SPEC-017-01)
+	HeartbeatInterval int    `yaml:"heartbeat_interval"` // heartbeat 間隔(秒)。既定 lease_ttl/3
 }
 
 // Topic は論理的なファイル種別 1 つとそのソース / subscription 群を定義する (E-002)。
@@ -156,6 +175,20 @@ func Load(path string) (*Config, error) {
 func (c *Config) applyDefaults(configPath string) {
 	if c.DataDir == "" {
 		c.DataDir = filepath.Dir(configPath)
+	}
+	// high_availability ブロックが present のときだけ既定値を補完する。
+	// nil(省略)は単一インスタンス運用なので何もしない (SPEC-015-01, SPEC-017-01)。
+	if c.HighAvailability != nil {
+		ha := c.HighAvailability
+		if ha.UniquenessMethod == "" {
+			ha.UniquenessMethod = UniquenessMethodLease
+		}
+		if ha.LeaseTTL <= 0 {
+			ha.LeaseTTL = DefaultLeaseTTL
+		}
+		if ha.HeartbeatInterval <= 0 {
+			ha.HeartbeatInterval = ha.LeaseTTL / 3
+		}
 	}
 	for i := range c.Topics {
 		src := &c.Topics[i].Source

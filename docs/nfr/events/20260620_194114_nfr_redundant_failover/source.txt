@@ -1,0 +1,6 @@
+RDRA 差分 20260620_171535_add_redundant_failover に基づく NFR 再評価（可用性カテゴリ）。
+
+冗長構成(active/standby 自動フェイルオーバー)対応 (REQ-018/SPEC-018-01):
+A.2.1.1「サーバ内の冗長化」を現状 Lv1(冗長化なし、再起動で復旧)から active/standby 冗長化あり・自動フェイルオーバー前提(Lv4 完全冗長化・自動切替)へ引き上げる。関連する可用性メトリクス(切替時間 A.1.2.1、RTO A.4.1.2、RLO A.4.1.3、障害復旧方式 C.3.3.1)を自動フェイルオーバーで切替時間が短縮される前提に整合させる。lease 失効検知〜standby 昇格の時間が RTO の主要因。
+
+唯一性保証は方式B(lease 自動奪取、file-pubsub 単体)+ 方式A(外部クラスタ fencing 委譲、Pacemaker/keepalived、VIP+serve 同一リソース)の二方式併用。前提は VIP + NFS(v4 推奨)共有 data_dir、NTP 時刻同期、single-writer 維持。フェイルオーバー時の split-brain 被害は高々1メッセージ重複配信(破損・喪失なし)に限定(REQ-016)。可用性を上げるが exactly-once は保証しない(既存 at-least-once 方針の継続)。

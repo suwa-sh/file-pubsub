@@ -1,0 +1,2 @@
+コンテキスト	バリエーション	値	説明
+基盤運用管理	唯一性保証方式	方式A(外部クラスタ委譲)、方式B(lease自動奪取)	active/standby冗長構成でserveプロセスを常に1つだけ(single-writer)に保つための唯一性保証の切替軸。方式B(lease自動奪取)はfile-pubsub単体でleaseのTTL失効によりstandbyが自動昇格する。方式A(外部クラスタ委譲)はPacemaker/keepalived等の外部クラスタのfencingが唯一性を保証し、VIPとserveを同一リソースグループで束ねる。file-pubsubはTTL失効による自動奪取を行わず外部クラスタに委ねる。設定で切り替え・併用でき、同一バイナリで両環境をカバーする
