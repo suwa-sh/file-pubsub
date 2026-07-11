@@ -89,6 +89,13 @@ name = "hadolint"
 [[plugin]]
 name = "osv-scanner"
 
+# GO-2026-5932: golang.org/x/crypto/openpgp は未メンテナンスのため module-level 警告。
+# このプロジェクトは openpgp を使用しておらず、現時点で修正バージョンも存在しない。
+[[ignore]]
+[ignore.match]
+tools = ["osv-scanner"]
+issue_codes = ["GO-2026-5932"]
+
 [[plugin]]
 name = "radarlint-go"
 mode = "monitor"
