@@ -64,6 +64,15 @@ plugins = ["radarlint-go", "radarlint-iac"]
 [triage.set]
 level = "low"
 
+# GO-2026-5932 は golang.org/x/crypto の openpgp サブパッケージに影響するが、
+# 本プロジェクトは openpgp を使用しておらず、かつ修正バージョンも存在しない (全バージョン affected)。
+[[triage]]
+[triage.match]
+plugins = ["osv-scanner"]
+rule_keys = ["GO-2026-5932"]
+[triage.set]
+level = "low"
+
 [[source]]
 name = "default"
 default = true
