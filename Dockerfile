@@ -1,6 +1,6 @@
 # file-pubsub container image: a single static binary on a distroless base.
 # The configuration is mounted at runtime (default: /etc/file-pubsub/config.yaml).
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
